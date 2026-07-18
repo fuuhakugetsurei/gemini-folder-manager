@@ -23,11 +23,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">{children}</body>
-    </html>
-  );
+  <html 
+    lang="en" 
+    suppressHydrationWarning // 加上這行，叫 React 忽略瀏覽器外掛造成的屬性不一致
+    className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+  >
+    <body className="h-full">
+      {children}
+    </body>
+  </html>
+);
 }
