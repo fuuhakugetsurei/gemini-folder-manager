@@ -246,7 +246,7 @@ export default function Home() {
 
   const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
-    if (!confirm('確定要刪除此資料夾嗎？裡面的所有對話也會一併消失喔！')) return;
+    if (!confirm('確定要刪除此資料夾嗎？裡面的所有對話幕也會一併消失喔！')) return;
 
     const { error } = await supabase.from('folders').delete().eq('id', folderId);
     if (!error) {
@@ -356,7 +356,7 @@ export default function Home() {
     }
   };
 
-  // 呼叫 Gemini API 
+  // 核心：呼叫 Gemini API 並強制全域同步狀態
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || !currentChat || !apiKey || isSending) return;
@@ -373,7 +373,11 @@ export default function Home() {
     const userMessage = { role: 'user', content: finalContent };
     const updatedMessages = [...currentChat.messages, userMessage];
     
-    setCurrentChat({ ...currentChat, messages: updatedMessages });
+    // 🛠️ 關鍵同步修正 1：即時更新當前與歷史列表，防止渲染中斷
+    const nextChatState = { ...currentChat, messages: updatedMessages };
+    setCurrentChat(nextChatState);
+    setConversations(conversations.map(c => c.id === currentChat.id ? nextChatState : c)); 
+
     const originalInput = inputMessage.trim();
     setInputMessage('');
     setAttachedImageUrl(null); 
@@ -435,19 +439,27 @@ export default function Home() {
       const modelResponseText = response.text || '（未能取得回應）';
       const finalMessages = [...updatedMessages, { role: 'model', content: modelResponseText }];
 
+      // 🛠️ 關鍵同步修正 2：API 回應成功時，連同左側歷史清單一併將全域狀態強制同步寫入 
+      const updatedChatFromAi = {
+        ...currentChat,
+        messages: finalMessages,
+        title: currentChat.title === '新對話' ? (originalInput || attachedFileName || '檔案對話') : currentChat.title,
+        updated_at: new Date().toISOString()
+      };
+
       const { data } = await supabase
         .from('conversations')
         .update({ 
           messages: finalMessages,
-          title: currentChat.title === '新對話' ? (originalInput || attachedFileName || '檔案對話') : currentChat.title,
-          updated_at: new Date().toISOString()
+          title: updatedChatFromAi.title,
+          updated_at: updatedChatFromAi.updated_at
         })
         .eq('id', currentChat.id)
         .select();
 
       if (data) {
-        setCurrentChat(data[0]);
-        setConversations(conversations.map(c => c.id === currentChat.id ? data[0] : c));
+        setCurrentChat(data[0]); 
+        setConversations(conversations.map(c => c.id === currentChat.id ? data[0] : c)); 
       }
     } catch (err: any) {
       alert(`Gemini API 錯誤: ${err.message}`);
@@ -679,7 +691,7 @@ export default function Home() {
             <div className="flex justify-end pt-2">
               <button
                 type="button"
-                onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }}
+                onClick={() => { setIsFeaturesMenuOpen(true); setActiveGuide(null); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors w-full sm:w-auto"
               >
                 我知道了，返回
@@ -772,6 +784,7 @@ export default function Home() {
                 <div className="space-y-1">
                   {conversations.filter(c => c.folder_id === selectedFolderId).map(c => (
                     <div key={c.id} className="group flex items-center justify-between rounded text-xs transition-colors border border-transparent">
+                      {/* 🛠️ 關鍵同步修正 3：切換對話時，直接從大陣列撈最新值，徹底阻斷 React 狀態渲染延遲  */}
                       <button onClick={() => { setCurrentChat(c); setIsSidebarOpen(false); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
                         <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                         <span className="truncate flex-1 max-w-[130px]">
@@ -799,7 +812,7 @@ export default function Home() {
       <main className="flex-1 flex flex-col bg-slate-950 h-full overflow-hidden">
         {currentChat ? (
           <>
-            {/* 對話頂欄 */}
+            {/* 对話頂欄 */}
             <header className="p-3 md:p-4 border-b border-slate-900 bg-slate-900/30 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-3 truncate">
                 <button onClick={() => setIsSidebarOpen(true)} className="md:hidden text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 flex-shrink-0">
@@ -814,7 +827,7 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">智能雙流分流中</span>
             </header>
 
-            {/* 🛠️ 核心修正：將父層容器徹底綁定 h-[calc(100vh-130px)] 杜絕塌陷蒸發 Bug！ */}
+            {/* 複合彈性格局 */}
             <div className="flex-1 flex flex-row overflow-hidden h-[calc(100vh-130px)] relative">
               
               {/* 💬 核心對話框 */}
@@ -872,7 +885,7 @@ export default function Home() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* ⏱️ 縱向滾動時間軸 */}
+              {/* ⏱️ 縱向滾動時間軸：只紀錄使用者的問題 */}
               <aside className="hidden sm:flex absolute right-2 top-4 bottom-4 w-4 bg-slate-800/20 backdrop-blur-sm rounded-full flex-col items-center py-4 overflow-y-auto space-y-4 border border-slate-800/40 scrollbar-none z-30">
                 {currentChat.messages.map((msg, i) => {
                   if (msg.role !== 'user') return null;
