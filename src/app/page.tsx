@@ -1,5 +1,6 @@
 'use client';
 
+import ReactMarkdown from 'react-markdown';
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Folder, Conversation } from '@/lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -443,7 +444,21 @@ export default function Home() {
                 currentChat.messages.map((msg, i) => (
                   <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     <div className={`max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
-                      <p className="whitespace-pre-wrap">{msg.content}</p>
+                      {msg.role === 'user' ? (
+                        // 使用者的話通常是純文字，維持原狀即可
+                        <p className="whitespace-pre-wrap">{msg.content}</p>
+                      ) : (
+                        // 🤖 Gemini 回傳的訊息，交給 ReactMarkdown 進行高質感渲染
+                        <div className="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-2
+                          prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+                          prose-p:leading-relaxed
+                          prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
+                          prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
+                          prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
+                          prose-strong:text-white font-normal">
+                          <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))
