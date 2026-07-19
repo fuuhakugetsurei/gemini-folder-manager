@@ -24,7 +24,7 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
-  // 🤖 Gemini 模型切換狀態 - 預設改為 3 系列
+  // 🤖 Gemini 模型切換狀態 - 僅保留 3 系列核心
   const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
 
   // 🔐 邀請密鑰專用防禦狀態
@@ -92,12 +92,12 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 自動捲動到對話最底部
+  // ✨【防禦性自動捲動修復】改用 nearest 限制滾動範圍向外擴散，防止外層網頁上捲
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [currentChat?.messages]);
 
-  // ✨【修復點】收緊模型校驗邏輯，只允許 3 系列核心通過
+  // 僅保留 3 系列核心的校驗邏輯
   const normalizeModelSelection = (model: string) => {
     switch (model) {
       case 'gemini-3.5-flash':
@@ -458,6 +458,7 @@ export default function Home() {
       const modelResponseText = response.text || '（未能取得回應）';
       const finalMessages = [...updatedMessages, { role: 'model', content: modelResponseText }];
 
+      // ✨【修復點】擷取 nextChatState 的最新標題，改掉原先初始化前引用的 ReferenceError 臭蟲
       const currentChatTitle = nextChatState.title;
       const currentChatIsoString = new Date().toISOString();
 
@@ -729,7 +730,7 @@ export default function Home() {
             </button>
           </div>
           
-          {/* 模型切換區 - ✨【修復點】全面替換為 3 系列核心 */}
+          {/* 模型切換區 - 全面替換為 3 系列核心 */}
           <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60 space-y-1.5">
             <div>
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心</label>
@@ -839,11 +840,11 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">智能雙流分流中</span>
             </header>
 
-            {/* 複合彈性格局 */}
-            <div className="flex-1 flex flex-row overflow-hidden h-[calc(100vh-130px)] relative">
+            {/* 複合彈性格局 - ✨【修復盲點 1】使用 flex-1 h-0 徹底將高度困在這一層，絕不溢出到外層 window */}
+            <div className="flex-1 h-0 flex flex-row relative">
               
-              {/* 💬 核心對話框 */}
-              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8 h-full">
+              {/* 💬 核心對話框 - ✨【修復盲點 2】調整右側 padding 留白，確保右方的時間軸有獨立空間，且使用者訊息不套 LaTeX */}
+              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-10 h-full">
                 {currentChat.messages.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片、原始碼或文字檔開始聊吧。</div>
                 ) : (
@@ -898,7 +899,9 @@ export default function Home() {
                     </div>
                   </div>
                 )}
-                <div ref={messagesEndRef} />
+                
+                {/* 滾動底部鎖定點 */}
+                <div ref={messagesEndRef} className="h-2 w-full flex-shrink-0" />
               </div>
 
               {/* ⏱️ 縱向滾動時間軸：只紀錄使用者的問題 */}
