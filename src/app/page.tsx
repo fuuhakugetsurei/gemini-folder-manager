@@ -24,8 +24,8 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
-  // 🤖 Gemini 模型切換狀態
-  const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash');
+  // 🤖 Gemini 模型切換狀態 - 預設改為 3 系列
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
 
   // 🔐 邀請密鑰專用防禦狀態
   const [isVerified, setIsVerified] = useState<boolean | null>(null); 
@@ -97,14 +97,14 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentChat?.messages]);
 
+  // ✨【修復點】收緊模型校驗邏輯，只允許 3 系列核心通過
   const normalizeModelSelection = (model: string) => {
     switch (model) {
-      case 'gemini-2.0-flash':
-      case 'gemini-2.0-flash-lite':
-      case 'gemini-2.5-pro':
+      case 'gemini-3.5-flash':
+      case 'gemini-3.5-pro':
         return model;
       default:
-        return 'gemini-2.0-flash';
+        return 'gemini-3.5-flash';
     }
   };
 
@@ -458,7 +458,6 @@ export default function Home() {
       const modelResponseText = response.text || '（未能取得回應）';
       const finalMessages = [...updatedMessages, { role: 'model', content: modelResponseText }];
 
-      // ✨【修復點 1】擷取 nextChatState 的最新標題，改掉原先初始化前引用的 ReferenceError 臭蟲
       const currentChatTitle = nextChatState.title;
       const currentChatIsoString = new Date().toISOString();
 
@@ -730,7 +729,7 @@ export default function Home() {
             </button>
           </div>
           
-          {/* 模型切換區 */}
+          {/* 模型切換區 - ✨【修復點】全面替換為 3 系列核心 */}
           <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60 space-y-1.5">
             <div>
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心</label>
@@ -739,15 +738,13 @@ export default function Home() {
                 onChange={(e) => saveSelectedModel(e.target.value)}
                 className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
-                <option value="gemini-2.0-flash">Gemini 2.0 Flash (全能·速度快)</option>
-                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (輕量·低延遲)</option>
-                <option value="gemini-2.5-pro">Gemini 2.5 Pro (深度·寫程式)</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·次世代高流速)</option>
+                <option value="gemini-3.5-pro">Gemini 3.5 Pro (深度推理·專家代碼)</option>
               </select>
             </div>
             <div className="text-[10px] text-slate-500 leading-tight px-1">
-              {selectedModel === 'gemini-2.0-flash' && "⚡ 提示：Flash 模型適合日常聊天與快速整理。"}
-              {selectedModel === 'gemini-2.0-flash-lite' && "⚡ 提示：Lite 模型低延遲，適合簡短互動與大量請求。"}
-              {selectedModel === 'gemini-2.5-pro' && "🧠 提示：Pro 模型更適合深度推理與複雜程式生成。"}
+              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：全新 3.5 Flash 核心，極速回應，全方位覆蓋日常開發與複雜學術任務。"}
+              {selectedModel === 'gemini-3.5-pro' && "🧠 提示：3.5 Pro 重推推理引擎，專攻高難度演算法、數理證明與深層邏輯解構。"}
             </div>
           </div>
 
@@ -864,7 +861,6 @@ export default function Home() {
                                 <img src={match[1]} alt="雲端儲存桶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
                               </div>
                             )}
-                            {/* ✨【修復點 2】使用者的問題（可能夾帶充滿符號的原始碼）只走標準 Markdown，不掛載 LaTeX 渲染器，徹底避免前端元件渲染崩潰 */}
                             {cleanText && (
                               <div className="whitespace-pre-wrap text-xs md:text-sm prose prose-invert max-w-none prose-code:text-amber-300 prose-pre:bg-slate-950">
                                 <ReactMarkdown>{cleanText}</ReactMarkdown>
@@ -881,7 +877,6 @@ export default function Home() {
                                 prose-pre:bg-slate-900 prose-pre:p-4 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
                                 prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5
                                 prose-strong:text-white font-semibold">
-                                {/* ✨【修復點 3】只有 AI 回應的學術或算式內容才需要過 Latex 引擎解析 */}
                                 <ReactMarkdown 
                                   remarkPlugins={[remarkMath]} 
                                   rehypePlugins={[rehypeKatex]}
