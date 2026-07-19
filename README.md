@@ -21,6 +21,13 @@
 3. 在左側欄的 **Gemini API Key** 輸入框中，貼上您在 [Google AI Studio](https://aistudio.google.com/) 免費申請的 API 金鑰。
 4. 在左側建立資料夾，並點擊 **「+ 新對話」**，即可在右側開始與 Gemini 進行流暢對話，所有對話標題與內容皆會全自動即時同步至雲端。
 
+### 待實現
+1. 匯入功能
+2. 時間軸
+3. 用戶引導:api金鑰便於匯入、大圖片上傳
+4. 圖片上傳  
+5. 適配手機版面
+   
 ### 🚀 開發者部署指南
 
 如果您想自己架設或進行二次開發，請遵循以下步驟：
@@ -51,11 +58,7 @@ npm run dev
 
 ---
 
-#### 4. 待實現
-1. 匯入功能
-2. 時間軸
-3. api金鑰便於匯入
-4. 圖片上傳  
+
 ## English
 
 A modern, full-stack AI conversation management client built with **Next.js 15 (App Router)**, **Supabase**, and **Google Gemini API**. It solves the limitation of the official Gemini web interface by allowing users to organize chat histories into custom folders with real-time cloud synchronization across all devices.

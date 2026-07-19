@@ -1,6 +1,8 @@
 'use client';
 
 import ReactMarkdown from 'react-markdown';
+import remarkMath from 'remark-math';
+import rehypeKatex from 'rehype-katex';
 import { useState, useEffect, useRef } from 'react';
 import { supabase, Folder, Conversation } from '@/lib/supabase';
 import { User } from '@supabase/supabase-js';
@@ -292,9 +294,13 @@ export default function Home() {
         return { role: 'user', parts: parts };
       });
 
+      // 🛑 繁體中文與標準 LaTeX 公式注入防禦提示詞[cite: 1]
       const response = await ai.models.generateContent({
         model: selectedModel,
         contents: contents,
+        config: {
+          systemInstruction: "你是一個專業、精準的學術與程式助手。當使用者使用中文與你對話時，你必須、且只能使用『繁體中文（台灣習慣用語）』進行回覆。如果回答中涉及數學公式、定理、階乘、算式或變數，你必須嚴格使用標準 LaTeX 語法包裹，行內公式使用 $...$ 包裹，獨立區塊公式使用 $$...$$ 包裹。嚴禁直接輸出純文字的數學運算符號（例如嚴禁直接寫 \\times 卻沒有包裹在 $ 裡面）。"
+        }
       });
 
       const modelResponseText = response.text || '（未能取得回應）';
@@ -339,7 +345,7 @@ export default function Home() {
 
   if (isVerified === false) {
     return (
-      <main className="flex h-screen flex-col items-center justify-center bg-slate-955 text-white p-4">
+      <main className="flex h-screen flex-col items-center justify-center bg-slate-95 yard text-white p-4">
         <div className="w-full max-w-md rounded-2xl bg-slate-900 p-8 shadow-xl border border-slate-800">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-2xl">🔐</span>
@@ -381,7 +387,7 @@ export default function Home() {
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative">
       
-      {/* 📱 行動端側邊欄黑底遮罩 */}
+      {/* 行動端側邊欄黑底遮罩 */}
       {isSidebarOpen && (
         <div 
           onClick={() => setIsSidebarOpen(false)} 
@@ -508,11 +514,11 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">雲端同步</span>
             </header>
 
-            {/* 💡 融合圖二概念：無捲動條對話區 + 懸浮垂直進度軌道時間軸 */}
+            {/* 複合彈性格局 */}
             <div className="flex-1 flex flex-row overflow-hidden h-full relative">
               
-              {/* 💬 核心對話框：使用 scrollbar-none 封印原始大灰色捲動條 */}
-              <div className="flex-1 overflow-y-auto p-3 md:p-4 space-y-4 scrollbar-none pr-8">
+              {/* 💬 核心對話框 */}
+              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8">
                 {currentChat.messages.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
                 ) : (
@@ -523,44 +529,59 @@ export default function Home() {
 
                     return (
                       <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                        <div className={`max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed space-y-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
-                          {match && (
-                            <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
-                              <img src={match[1]} alt="對話夾帶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
-                            </div>
-                          )}
-                          {msg.role === 'user' ? (
-                            cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>
-                          ) : (
-                            cleanText && (
-                              <div className="prose prose-invert max-w-none text-slate-200 text-xs md:text-sm leading-relaxed space-y-2
-                                prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
-                                prose-p:leading-relaxed
-                                prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
-                                prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
-                                prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
-                                prose-strong:text-white font-normal">
-                                <ReactMarkdown>{cleanText}</ReactMarkdown>
+                        {msg.role === 'user' ? (
+                          /* 👤 使用者維持精緻氣泡對話框形式 */
+                          <div className="max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm bg-indigo-600 text-white rounded-br-none shadow-md">
+                            {match && (
+                              <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
+                                <img src={match[1]} alt="對話夾帶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
                               </div>
-                            )
-                          )}
-                        </div>
+                            )}
+                            {cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>}
+                          </div>
+                        ) : (
+                          /* 🤖 AI 移除對話框，直接沉浸式鋪平顯示，並同步放大字體 */
+                          <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
+                            {cleanText && (
+                              <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3
+                                prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
+                                prose-p:leading-relaxed
+                                prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs md:prose-code:text-sm
+                                prose-pre:bg-slate-900 prose-pre:p-4 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
+                                prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5
+                                prose-strong:text-white font-semibold">
+                                {/* 🧮 載入外掛：完美渲染 LaTeX 行內及區塊數學算式 */}
+                                <ReactMarkdown 
+                                  remarkPlugins={[remarkMath]} 
+                                  rehypePlugins={[rehypeKatex]}
+                                >
+                                  {cleanText}
+                                </ReactMarkdown>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })
                 )}
                 {isSending && (
                   <div className="flex justify-start">
-                    <div className="bg-slate-900 text-slate-400 border border-slate-800 rounded-xl rounded-bl-none px-3.5 py-2 text-xs md:text-sm animate-pulse">Gemini 思考中...</div>
+                    <div className="text-slate-400 text-xs md:text-sm animate-pulse flex items-center gap-2">
+                      <span>✨ Gemini 正在運算繁體中文與公式...</span>
+                    </div>
                   </div>
                 )}
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* ⏱️ 完美實作圖二：懸浮在右側邊緣、自帶科技灰色背脊的「進度條縱向時間軸」 */}
+              {/* ⏱️ 完美優化時間軸：只紀錄使用者的問題（msg.role === 'user'） */}
               <aside className="hidden sm:flex absolute right-2 top-4 bottom-4 w-4 bg-slate-800/20 backdrop-blur-sm rounded-full flex-col items-center py-4 overflow-y-auto space-y-4 border border-slate-800/40 scrollbar-none z-30">
                 {currentChat.messages.map((msg, i) => {
-                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || (msg.role === 'user' ? '圖片' : '智慧回應');
+                  // 防禦性過濾：如果不是使用者發送的，直接略過不產生小圓點，避免重複與擁擠
+                  if (msg.role !== 'user') return null;
+
+                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題';
                   return (
                     <button
                       key={i}
@@ -568,12 +589,8 @@ export default function Home() {
                         const element = document.getElementById(`message-node-${i}`);
                         element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       }}
-                      title={`[${msg.role === 'user' ? '您' : 'AI'}] ${previewText}...`}
-                      className={`w-2.5 h-2.5 rounded-full transition-all duration-200 flex-shrink-0 cursor-pointer hover:scale-150
-                        ${msg.role === 'user' 
-                          ? 'bg-slate-500/70 hover:bg-indigo-400 border border-transparent shadow-[0_0_8px_rgba(129,140,248,0.5)]' 
-                          : 'bg-slate-600 hover:bg-emerald-400 border border-transparent shadow-[0_0_8px_rgba(52,211,153,0.5)]'
-                        }`}
+                      title={`[問題紀錄] ${previewText}...`}
+                      className="w-2.5 h-2.5 rounded-full transition-all duration-200 flex-shrink-0 cursor-pointer hover:scale-150 bg-slate-500 hover:bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.5)]"
                     />
                   );
                 })}
@@ -600,7 +617,7 @@ export default function Home() {
                     <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending} />
                   </label>
 
-                  <input type="text" placeholder={apiKey ? "輸入訊息..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
                   <button type="submit" disabled={(!inputMessage.trim() && !attachedImage) || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
