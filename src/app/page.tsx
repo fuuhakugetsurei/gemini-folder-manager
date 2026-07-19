@@ -36,7 +36,7 @@ export default function Home() {
   const [attachedImageUrl, setAttachedImageUrl] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // 📄 全新：本地文字/程式碼檔案暫存狀態（零雲端空間消耗）
+  // 📄 本地文字/程式碼檔案暫存狀態（零雲端空間消耗）
   const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
 
@@ -162,7 +162,7 @@ export default function Home() {
     }
   };
 
-  // 📎 萬用夾帶功能：自動判斷是圖片（走雲端 Storage）還是文字代碼檔（走本地零消耗吞吐流）
+  // 萬用文件夾帶分流處理
   const handleUniversalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -170,13 +170,11 @@ export default function Home() {
     const fileType = file.type;
     const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
 
-    // 🛡️ 限制 4MB 防禦邊界
     if (file.size > 4 * 1024 * 1024) {
       alert('檔案大小超過 4MB 限制！請優化體積後重新上傳。');
       return;
     }
 
-    // 🎨 分流 A：如果是圖片，維持推送到 Supabase Storage 儲存桶以獲取 CDN 連結
     if (fileType.startsWith('image/')) {
       setIsUploadingImage(true);
       try {
@@ -189,7 +187,6 @@ export default function Home() {
 
         const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
         setAttachedImageUrl(publicUrl);
-        // 清空文字檔狀態
         setAttachedFileContent(null);
         setAttachedFileName(null);
       } catch (err: any) {
@@ -197,22 +194,18 @@ export default function Home() {
       } finally {
         setIsUploadingImage(false);
       }
-    } 
-    // 📄 分流 B：如果是文字檔、原始碼檔，啟動「本地零空間消耗讀取流」
-    else {
+    } else {
       setAttachedFileName(file.name);
       const reader = new FileReader();
       reader.onload = (event) => {
         const text = event.target?.result as string;
         setAttachedFileContent(text || '');
-        // 清空圖片狀態
         setAttachedImageUrl(null);
       };
       reader.readAsText(file);
     }
   };
 
-  // 2. 資料庫撈取邏輯
   const fetchFolders = async () => {
     const { data } = await supabase.from('folders').select('*').order('created_at', { ascending: true });
     setFolders(data || []);
@@ -223,7 +216,6 @@ export default function Home() {
     setConversations(data || []);
   };
 
-  // 3. 資料夾與對話操作
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFolderName.trim() || !user) return;
@@ -284,7 +276,6 @@ export default function Home() {
     }
   };
 
-  // 📥 主動上傳並讀取 Markdown 檔案邏輯
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -330,7 +321,6 @@ export default function Home() {
     reader.readAsText(file);
   };
 
-  // 📥 檔案正式落盤至 Supabase 雲端
   const handleExecuteImport = async () => {
     if (parsedMessages.length === 0 || !user || isImporting) return;
     if (!selectedFolderId) return alert('請先在左側欄選取一個目的地資料夾，再執行匯入！');
@@ -366,19 +356,16 @@ export default function Home() {
     }
   };
 
-  // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
+  // 呼叫 Gemini API 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || !currentChat || !apiKey || isSending) return;
 
     let finalContent = inputMessage.trim();
 
-    // 🎨 機制 1：如果選的是圖片，封裝成雲端 URL 標記
     if (attachedImageUrl) {
       finalContent = `${inputMessage.trim()}\n\n[IMAGE_URL:${attachedImageUrl}]`;
-    } 
-    // 📄 機制 2：如果選的是代碼/文字檔，直接前端合流封裝成帶有名稱的標準 Markdown 程式碼區塊
-    else if (attachedFileContent && attachedFileName) {
+    } else if (attachedFileContent && attachedFileName) {
       const fileExt = attachedFileName.split('.').pop() || 'txt';
       finalContent = `${inputMessage.trim()}\n\n📁 **附帶檔案: ${attachedFileName}**\n\`\`\`${fileExt}\n${attachedFileContent}\n\`\`\``;
     }
@@ -390,7 +377,7 @@ export default function Home() {
     const originalInput = inputMessage.trim();
     setInputMessage('');
     setAttachedImageUrl(null); 
-    setAttachedFileContent(null); // 立即釋放本地快取
+    setAttachedFileContent(null); 
     setAttachedFileName(null);
     setIsSending(true);
 
@@ -431,7 +418,6 @@ export default function Home() {
             console.error("流式抓取儲存桶圖片失敗:", fetchErr);
           }
         } else {
-          // 文字與代碼 Markdown 格式本來就是純文字，直接作為標準 Text Part 外送
           parts.push({ text: text });
         }
 
@@ -693,7 +679,7 @@ export default function Home() {
             <div className="flex justify-end pt-2">
               <button
                 type="button"
-                onClick={() => { setActiveGuide('api'); setIsFeaturesMenuOpen(true); setActiveGuide(null); }}
+                onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors w-full sm:w-auto"
               >
                 我知道了，返回
@@ -828,11 +814,11 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">智能雙流分流中</span>
             </header>
 
-            {/* 複合彈性格局 */}
-            <div className="flex-1 flex flex-row overflow-hidden h-full relative">
+            {/* 🛠️ 核心修正：將父層容器徹底綁定 h-[calc(100vh-130px)] 杜絕塌陷蒸發 Bug！ */}
+            <div className="flex-1 flex flex-row overflow-hidden h-[calc(100vh-130px)] relative">
               
               {/* 💬 核心對話框 */}
-              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8">
+              <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8 h-full">
                 {currentChat.messages.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片、原始碼或文字檔開始聊吧。</div>
                 ) : (
@@ -912,7 +898,6 @@ export default function Home() {
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
                 
-                {/* 狀態連鎖反饋 */}
                 {isUploadingImage && (
                   <div className="text-xs text-indigo-400 animate-pulse bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     ⏳ 正在將相片直推至 Supabase Storage 儲存桶...
@@ -927,7 +912,6 @@ export default function Home() {
                   </div>
                 )}
 
-                {/* 📁 萬用本地文字/代碼夾帶卡片 */}
                 {attachedFileName && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
                     <span className="text-xl">📄</span>
@@ -940,16 +924,14 @@ export default function Home() {
                 )}
 
                 <div className="flex gap-2 items-center">
-                  {/* 📎 進化版：萬用文件夾帶按鈕（支援圖片、文字檔、各類程式碼檔案） */}
                   <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶相片(走雲端) 或 代碼/文字檔(走本地免額度)">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                     </svg>
-                    {/* 🔓 開放通用檔案選取限制，交給 handleUniversalFileChange 分流處理 */}
                     <input type="file" accept="image/*,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!apiKey || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={apiKey ? "輸入訊息，或夾帶相片、程式碼代碼檔案..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
                   <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || isSending || !apiKey || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
