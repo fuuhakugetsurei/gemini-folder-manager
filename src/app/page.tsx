@@ -21,6 +21,9 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
+  // 🤖 Gemini 三系列模型切換狀態
+  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
+
   // 🔐 邀請密鑰專用防禦狀態
   const [isVerified, setIsVerified] = useState<boolean | null>(null); 
   const [inviteCodeInput, setInviteCodeInput] = useState('');
@@ -46,6 +49,10 @@ export default function Home() {
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
+    // 讀取本地快取的模型設定
+    const savedModel = localStorage.getItem('gemini_selected_model');
+    if (savedModel) setSelectedModel(savedModel);
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
@@ -69,6 +76,12 @@ export default function Home() {
   const saveApiKey = (key: string) => {
     setApiKey(key);
     localStorage.setItem('gemini_api_key', key);
+  };
+
+  // 儲存模型設定到本地
+  const saveSelectedModel = (model: string) => {
+    setSelectedModel(model);
+    localStorage.setItem('gemini_selected_model', model);
   };
 
   // 🔐 檢查當前登入使用者是否已經成功綁定密鑰
@@ -192,9 +205,9 @@ export default function Home() {
         parts: [{ text: msg.content }]
       }));
 
-      // 更換為相容新使用者金鑰的通用主力模型 gemini-3.5-flash
+      // 動態調用使用者在左側選取的 Gemini 三系列核心模型
       const response = await ai.models.generateContent({
-        model: 'gemini-3.5-flash',
+        model: selectedModel,
         contents: contents,
       });
 
@@ -291,6 +304,27 @@ export default function Home() {
         <div className="p-4 overflow-y-auto flex-1">
           <h2 className="text-xl font-bold mb-4 text-indigo-400 tracking-wide">對話工作區</h2>
           
+          {/* 🤖 三系列核心模型切換設定區 */}
+          <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60 space-y-1.5">
+            <div>
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心</label>
+              <select 
+                value={selectedModel} 
+                onChange={(e) => saveSelectedModel(e.target.value)}
+                className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·速度快)</option>
+                <option value="gemini-3.1-pro">Gemini 3.1 Pro (深度·寫程式)</option>
+                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (預覽版)</option>
+              </select>
+            </div>
+            <div className="text-[10px] text-slate-500 leading-tight px-1">
+              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：Flash 模型限每分鐘 15 次，日常聊天首選。"}
+              {selectedModel === 'gemini-3.1-pro' && "⚠️ 提示：Pro 模型每分鐘限 5 次，深度推理專用。"}
+              {selectedModel === 'gemini-3.1-pro-preview' && "🧪 提示：預覽版功能最新，高負載時可能稍有延遲。"}
+            </div>
+          </div>
+
           {/* API Key 設定區 */}
           <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60">
             <label className="text-[11px] font-semibold text-slate-400 uppercase">Gemini API Key</label>
