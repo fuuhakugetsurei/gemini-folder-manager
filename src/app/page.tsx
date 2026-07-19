@@ -32,9 +32,13 @@ export default function Home() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [verifying, setVerifying] = useState(false);
 
-  // 🖼️ 全新：Supabase Storage 雲端圖片網址狀態（徹底取代肥大 Base64 快取）
+  // 🖼️ 雲端圖片網址狀態（Supabase Storage 分流）
   const [attachedImageUrl, setAttachedImageUrl] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+
+  // 📄 全新：本地文字/程式碼檔案暫存狀態（零雲端空間消耗）
+  const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
+  const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
 
   // 📱 行動端側邊欄收闔控制狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -68,11 +72,9 @@ export default function Home() {
     };
     checkUser();
 
-    // 讀取本地快取的 Gemini API Key
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
-    // 讀取本地快取的模型設定
     const savedModel = localStorage.getItem('gemini_selected_model');
     if (savedModel) setSelectedModel(savedModel);
 
@@ -95,19 +97,16 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentChat?.messages]);
 
-  // 儲存 API Key 到本地
   const saveApiKey = (key: string) => {
     setApiKey(key);
     localStorage.setItem('gemini_api_key', key);
   };
 
-  // 儲存模型設定到本地
   const saveSelectedModel = (model: string) => {
     setSelectedModel(model);
     localStorage.setItem('gemini_selected_model', model);
   };
 
-  // 🔐 檢查當前登入使用者是否已經成功綁定密鑰
   const checkUserVerification = async (userId: string) => {
     try {
       const { data, error } = await supabase
@@ -125,7 +124,6 @@ export default function Home() {
     }
   };
 
-  // 🔐 提交驗證密鑰邏輯
   const handleVerifyInviteCode = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!inviteCodeInput.trim() || !user || verifying) return;
@@ -164,40 +162,53 @@ export default function Home() {
     }
   };
 
-  // 🖼️ 核心升級：放棄肥大 Base64，全自動流式上傳至 Supabase Storage
-  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 📎 萬用夾帶功能：自動判斷是圖片（走雲端 Storage）還是文字代碼檔（走本地零消耗吞吐流）
+  const handleUniversalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    // 應要求放寬限額至 4MB
+    const fileType = file.type;
+    const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
+
+    // 🛡️ 限制 4MB 防禦邊界
     if (file.size > 4 * 1024 * 1024) {
-      alert('圖片大小超過 4MB 限制！請縮小體積後重新上傳。');
+      alert('檔案大小超過 4MB 限制！請優化體積後重新上傳。');
       return;
     }
 
-    setIsUploadingImage(true);
-    try {
-      // 建立時間戳記檔案名，防止重複衝突
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+    // 🎨 分流 A：如果是圖片，維持推送到 Supabase Storage 儲存桶以獲取 CDN 連結
+    if (fileType.startsWith('image/')) {
+      setIsUploadingImage(true);
+      try {
+        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+        const { error } = await supabase.storage
+          .from('images')
+          .upload(fileName, file, { cacheControl: '3600', upsert: true });
 
-      // 1. 直推上傳至你現成的 Supabase 'images' 儲存桶
-      const { data, error } = await supabase.storage
-        .from('images')
-        .upload(fileName, file, { cacheControl: '3600', upsert: true });
+        if (error) throw error;
 
-      if (error) throw error;
-
-      // 2. 獲取該儲存桶內檔案的公開訪問 URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('images')
-        .getPublicUrl(fileName);
-
-      setAttachedImageUrl(publicUrl);
-    } catch (err: any) {
-      alert(`儲存桶上傳失敗: ${err.message}\n請確保您的 Supabase 內已建立名為 'images' 且權限為 Public 的 Bucket！`);
-    } finally {
-      setIsUploadingImage(false);
+        const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+        setAttachedImageUrl(publicUrl);
+        // 清空文字檔狀態
+        setAttachedFileContent(null);
+        setAttachedFileName(null);
+      } catch (err: any) {
+        alert(`圖片儲存桶同步失敗: ${err.message}`);
+      } finally {
+        setIsUploadingImage(false);
+      }
+    } 
+    // 📄 分流 B：如果是文字檔、原始碼檔，啟動「本地零空間消耗讀取流」
+    else {
+      setAttachedFileName(file.name);
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const text = event.target?.result as string;
+        setAttachedFileContent(text || '');
+        // 清空圖片狀態
+        setAttachedImageUrl(null);
+      };
+      reader.readAsText(file);
     }
   };
 
@@ -358,12 +369,18 @@ export default function Home() {
   // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!inputMessage.trim() && !attachedImageUrl) || !currentChat || !apiKey || isSending) return;
+    if ((!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || !currentChat || !apiKey || isSending) return;
 
-    // 🔗 輕量化網址落盤：如果附帶雲端圖片網址，將其當作極短字串標記黏在文字後面
     let finalContent = inputMessage.trim();
+
+    // 🎨 機制 1：如果選的是圖片，封裝成雲端 URL 標記
     if (attachedImageUrl) {
       finalContent = `${inputMessage.trim()}\n\n[IMAGE_URL:${attachedImageUrl}]`;
+    } 
+    // 📄 機制 2：如果選的是代碼/文字檔，直接前端合流封裝成帶有名稱的標準 Markdown 程式碼區塊
+    else if (attachedFileContent && attachedFileName) {
+      const fileExt = attachedFileName.split('.').pop() || 'txt';
+      finalContent = `${inputMessage.trim()}\n\n📁 **附帶檔案: ${attachedFileName}**\n\`\`\`${fileExt}\n${attachedFileContent}\n\`\`\``;
     }
 
     const userMessage = { role: 'user', content: finalContent };
@@ -372,7 +389,9 @@ export default function Home() {
     setCurrentChat({ ...currentChat, messages: updatedMessages });
     const originalInput = inputMessage.trim();
     setInputMessage('');
-    setAttachedImageUrl(null); // 立即釋放前端狀態
+    setAttachedImageUrl(null); 
+    setAttachedFileContent(null); // 立即釋放本地快取
+    setAttachedFileName(null);
     setIsSending(true);
 
     try {
@@ -384,7 +403,6 @@ export default function Home() {
         }
 
         const text = msg.content;
-        // 🔬 同步支援解析 IMAGE_URL 標記
         const urlRegex = /\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/;
         const match = text.match(urlRegex);
 
@@ -396,7 +414,6 @@ export default function Home() {
           
           const targetUrl = match[1];
           try {
-            // 🌐 線上流式轉型：後台臨時抓取儲存桶網址轉成 Gemini SDK 看得懂的二進位快取
             const imageResp = await fetch(targetUrl);
             const blob = await imageResp.blob();
             const buffer = await blob.arrayBuffer();
@@ -414,6 +431,7 @@ export default function Home() {
             console.error("流式抓取儲存桶圖片失敗:", fetchErr);
           }
         } else {
+          // 文字與代碼 Markdown 格式本來就是純文字，直接作為標準 Text Part 外送
           parts.push({ text: text });
         }
 
@@ -435,7 +453,7 @@ export default function Home() {
         .from('conversations')
         .update({ 
           messages: finalMessages,
-          title: currentChat.title === '新對話' ? (originalInput || '圖片對話') : currentChat.title,
+          title: currentChat.title === '新對話' ? (originalInput || attachedFileName || '檔案對話') : currentChat.title,
           updated_at: new Date().toISOString()
         })
         .eq('id', currentChat.id)
@@ -675,7 +693,7 @@ export default function Home() {
             <div className="flex justify-end pt-2">
               <button
                 type="button"
-                onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }}
+                onClick={() => { setActiveGuide('api'); setIsFeaturesMenuOpen(true); setActiveGuide(null); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors w-full sm:w-auto"
               >
                 我知道了，返回
@@ -807,7 +825,7 @@ export default function Home() {
                   {currentChat.title.includes('[IMAGE_URL:') ? currentChat.title.split('[IMAGE_URL:')[0].trim() || '圖片對話' : currentChat.title}
                 </h3>
               </div>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">儲存桶分流中</span>
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">智能雙流分流中</span>
             </header>
 
             {/* 複合彈性格局 */}
@@ -816,7 +834,7 @@ export default function Home() {
               {/* 💬 核心對話框 */}
               <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8">
                 {currentChat.messages.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
+                  <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片、原始碼或文字檔開始聊吧。</div>
                 ) : (
                   currentChat.messages.map((msg, i) => {
                     const urlRegex = /\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/;
@@ -827,13 +845,12 @@ export default function Home() {
                       <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {msg.role === 'user' ? (
                           <div className="max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm bg-indigo-600 text-white rounded-br-none shadow-md">
-                            {/* 🔬 完美解包：直接引用 Supabase Storage 的公開 URL 渲染縮圖 */}
                             {match && (
                               <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
                                 <img src={match[1]} alt="雲端儲存桶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
                               </div>
                             )}
-                            {cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>}
+                            {cleanText && <div className="whitespace-pre-wrap text-xs md:text-sm prose prose-invert max-w-none prose-code:text-amber-300 prose-pre:bg-slate-950"><ReactMarkdown>{cleanText}</ReactMarkdown></div>}
                           </div>
                         ) : (
                           <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
@@ -862,7 +879,7 @@ export default function Home() {
                 {isSending && (
                   <div className="flex justify-start">
                     <div className="text-slate-400 text-xs md:text-sm animate-pulse flex items-center gap-2">
-                      <span>✨ Gemini 正在運算繁體中文與公式...</span>
+                      <span>✨ Gemini 正在解構上下文與算式...</span>
                     </div>
                   </div>
                 )}
@@ -874,7 +891,7 @@ export default function Home() {
                 {currentChat.messages.map((msg, i) => {
                   if (msg.role !== 'user') return null;
 
-                  const previewText = msg.content.replace(/\[IMAGE_URL:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題';
+                  const previewText = msg.content.replace(/\[IMAGE_URL:.*\]/g, '').slice(0, 15) || '原始碼或複雜檔案問題';
                   return (
                     <button
                       key={i}
@@ -895,31 +912,45 @@ export default function Home() {
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
                 
-                {/* 狀態連鎖：圖片選取或上傳中的狀態反饋 */}
+                {/* 狀態連鎖反饋 */}
                 {isUploadingImage && (
                   <div className="text-xs text-indigo-400 animate-pulse bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
-                    ⏳ 正在將原圖直推至 Supabase Storage 儲存桶...
+                    ⏳ 正在將相片直推至 Supabase Storage 儲存桶...
                   </div>
                 )}
 
                 {attachedImageUrl && (
-                  <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
+                  <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
                     <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片上傳成功！已取得獨立雲端 CDN 網址</span>
+                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已上傳至雲端 CDN 桶</span>
                     <button type="button" onClick={() => setAttachedImageUrl(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
 
+                {/* 📁 萬用本地文字/代碼夾帶卡片 */}
+                {attachedFileName && (
+                  <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
+                    <span className="text-xl">📄</span>
+                    <span className="text-[10px] md:text-[11px] text-indigo-400 font-mono font-semibold truncate max-w-[180px]">
+                      {attachedFileName}
+                    </span>
+                    <span className="text-[9px] text-slate-500">（本地異步合流·零空間消耗）</span>
+                    <button type="button" onClick={() => { setAttachedFileContent(null); setAttachedFileName(null); }} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
+                  </div>
+                )}
+
                 <div className="flex gap-2 items-center">
-                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0">
+                  {/* 📎 進化版：萬用文件夾帶按鈕（支援圖片、文字檔、各類程式碼檔案） */}
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶相片(走雲端) 或 代碼/文字檔(走本地免額度)">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                     </svg>
-                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending || isUploadingImage} />
+                    {/* 🔓 開放通用檔案選取限制，交給 handleUniversalFileChange 分流處理 */}
+                    <input type="file" accept="image/*,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!apiKey || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl) || isSending || !apiKey || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                  <input type="text" placeholder={apiKey ? "輸入訊息，或夾帶相片、程式碼代碼檔案..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || isSending || !apiKey || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
             </form>
