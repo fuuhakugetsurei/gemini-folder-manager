@@ -38,7 +38,7 @@ export default function Home() {
   // 📱 行動端側邊欄收闔控制狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  // ⚙️ 新增：「其他功能」總中控艙狀態
+  // ⚙️ 「其他功能」總中控艙狀態
   const [isFeaturesMenuOpen, setIsFeaturesMenuOpen] = useState(false);
 
   // 📥 匯入控制艙（Modal）狀態
@@ -47,6 +47,9 @@ export default function Home() {
   const [parsedMessages, setParsedMessages] = useState<{ role: string; content: string }[]>([]);
   const [firstQuestionTitle, setFirstQuestionTitle] = useState('');
   const [isImporting, setIsImporting] = useState(false);
+
+  // 💡 全新加入：用戶引導彈窗狀態
+  const [activeGuide, setActiveGuide] = useState<'api' | 'compress' | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -165,8 +168,9 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 1 * 1024 * 1024) {
-      alert('圖片大小超過 1MB 限制！為了幫您的雲端資料庫省空間，請選擇較小的圖片。');
+    // 🛡️ 應使用者要求，將上傳防禦限制放寬至 4MB 以內
+    if (file.size > 4 * 1024 * 1024) {
+      alert('圖片大小超過 4MB 限制！請查看擴充功能裡的「圖片壓縮引導」來縮小體積，以保護您的雲端純文字資料庫。');
       return;
     }
 
@@ -319,7 +323,6 @@ export default function Home() {
         setCurrentChat(data[0]);
         alert(`成功導入！已建立新生命對話（共解析 ${parsedMessages.length} 則歷史訊息）。`);
         
-        // 重置艙門狀態
         setImportedFileName(null);
         setParsedMessages([]);
         setFirstQuestionTitle('');
@@ -482,7 +485,7 @@ export default function Home() {
         <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity" />
       )}
 
-      {/* ⚙️ 核心一級嵌套視窗：「其他功能總控制艙」 */}
+      {/* ⚙️ 一級控制艙：「其他功能總控制台」 */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in">
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -496,13 +499,11 @@ export default function Home() {
               </button>
             </div>
 
-            {/* 功能矩陣導覽區：未來所有的客製化新功能按鈕都放在這裡 */}
-            <div className="grid grid-cols-1 gap-2 py-2">
+            {/* 🛠️ 擴充功能選單矩陣 */}
+            <div className="grid grid-cols-1 gap-2.5 py-1">
+              {/* 按鈕 1：歷史對話重組 */}
               <button
-                onClick={() => {
-                  setIsImportModalOpen(true); // 開啟二級嵌套的匯入艙
-                  setIsFeaturesMenuOpen(false); // 自動關閉一級選單，保持視覺專注
-                }}
+                onClick={() => { setIsImportModalOpen(true); setIsFeaturesMenuOpen(false); }}
                 className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
               >
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">📥</span>
@@ -512,20 +513,35 @@ export default function Home() {
                 </div>
               </button>
 
-              {/* 💡 未來的新功能預留坑位範例： */}
-              <div className="w-full bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-left flex items-center gap-3 opacity-40 select-none">
-                <span className="text-xl bg-slate-900/40 p-2 rounded-lg">🚀</span>
+              {/* 按鈕 2：全新加入的 API Key 申請指南 */}
+              <button
+                onClick={() => { setActiveGuide('api'); setIsFeaturesMenuOpen(false); }}
+                className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
+              >
+                <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🔑</span>
                 <div>
-                  <p className="text-xs font-semibold text-slate-400">研擬中新擴充組件</p>
-                  <p className="text-[10px] text-slate-600 mt-0.5">保持主介面極簡，新功能不霸佔側邊欄</p>
+                  <p className="text-xs font-semibold text-slate-200">如何取得免費 API Key？</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">圖文引導你前往 Google AI Studio 申請專屬金鑰</p>
                 </div>
-              </div>
+              </button>
+
+              {/* 按鈕 3：全新加入的圖片過大處理解決方案 */}
+              <button
+                onClick={() => { setActiveGuide('compress'); setIsFeaturesMenuOpen(false); }}
+                className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
+              >
+                <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🖼️</span>
+                <div>
+                  <p className="text-xs font-semibold text-slate-200">圖片太大無法上傳？</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">教你如何快速壓縮圖片以符合 4MB 資料庫安全限制</p>
+                </div>
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* 📥 核心二級嵌套視窗：Markdown 檔案上傳解構艙 */}
+      {/* 📥 二級嵌套視窗：Markdown 檔案上傳解構艙 */}
       {isImportModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
           <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -534,15 +550,7 @@ export default function Home() {
                 <span className="text-xl">📥</span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">歷史對話重組控制艙</h3>
               </div>
-              <button 
-                onClick={() => { 
-                  setIsImportModalOpen(false); 
-                  setImportedFileName(null); 
-                  setParsedMessages([]); 
-                  setIsFeaturesMenuOpen(true); // 貼心設計：關閉匯入時，自動彈回一級控制台
-                }} 
-                className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded"
-              >
+              <button onClick={() => { setIsImportModalOpen(false); setImportedFileName(null); setParsedMessages([]); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
                 返回上一層 ✕
               </button>
             </div>
@@ -581,12 +589,7 @@ export default function Home() {
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => { 
-                  setIsImportModalOpen(false); 
-                  setImportedFileName(null); 
-                  setParsedMessages([]); 
-                  setIsFeaturesMenuOpen(true); 
-                }}
+                onClick={() => { setIsImportModalOpen(false); setImportedFileName(null); setParsedMessages([]); setIsFeaturesMenuOpen(true); }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors"
               >
                 返回
@@ -598,6 +601,59 @@ export default function Home() {
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white text-xs font-semibold px-5 py-2 rounded-lg transition-colors"
               >
                 {isImporting ? '解構重組中...' : '確認匯入資料庫'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 💡 全新加入：二級靜態用戶引導控制艙 (API Key / 圖片壓縮) */}
+      {activeGuide && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">{activeGuide === 'api' ? '🔑' : '🖼️'}</span>
+                <h3 className="font-bold text-sm md:text-base text-slate-200">
+                  {activeGuide === 'api' ? 'Google AI Studio 密鑰指南' : '圖片體積優化指南'}
+                </h3>
+              </div>
+              <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
+                返回上一層 ✕
+              </button>
+            </div>
+
+            {/* 📑 引導文案渲染區 */}
+            <div className="text-xs text-slate-300 leading-relaxed space-y-3 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
+              {activeGuide === 'api' ? (
+                <>
+                  <p className="font-semibold text-indigo-400">只需三步，即可取得終身免費的 Gemini 核心金鑰：</p>
+                  <ol className="list-decimal pl-4 space-y-2 text-slate-400">
+                    <li>點擊前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官方網站</a> 並使用任意 Google 帳號登入。</li>
+                    <li>點擊左上角的 <span className="text-slate-200 font-semibold">"Get API key"</span> 按鈕。</li>
+                    <li>點擊 <span className="text-indigo-400 font-semibold">"Create API key"</span>，建立成功後將其複製，並貼回我們工作區左側的密鑰輸入框內即可！</li>
+                  </ol>
+                  <p className="text-[10px] text-slate-500 bg-slate-950/40 p-2 rounded border border-slate-800/60 leading-normal">⚠️ 提示：免費額度限每分鐘 15 次請求，日常使用、刷題、寫程式絕對綽綽有餘，金鑰會完全加密保存在您的瀏覽器快取中。</p>
+                </>
+              ) : (
+                <>
+                  <p className="font-semibold text-emerald-400">為了防止純文字資料庫在一夜之間被撐爆，本站設有 4MB 的硬性安全限制。如果圖片太大家可以這樣解決：</p>
+                  <ul className="list-disc pl-4 space-y-2 text-slate-400">
+                    <li><span className="text-slate-200 font-semibold">手機端截圖處理</span>：直接將手機截圖進行適度裁切，只留下需要發問的代碼或算式區域，體積通常會瞬間暴跌 80%！</li>
+                    <li><span className="text-slate-200 font-semibold">使用免費線上壓縮</span>：建議將相片上傳至常見的圖檔縮小工具，將品質調至 75%，肉眼看不出差別但體積能輕鬆壓到 1MB 以下。</li>
+                    <li><span className="text-slate-200 font-semibold">降檔解析度</span>：避免直接發送 4K 原圖，將解析度降為 1080p，即可完美兼顧清晰度與資料庫空間！</li>
+                  </ul>
+                </>
+              )}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors w-full sm:w-auto"
+              >
+                我知道了，返回
               </button>
             </div>
           </div>
@@ -638,7 +694,7 @@ export default function Home() {
             </div>
           </div>
 
-          {/* ⚙️ 完美防禦組件：側邊欄只留下一顆乾淨的擴充入口，維持介面最高簡潔度 */}
+          {/* ⚙️ 核心功能入口 */}
           <button 
             onClick={() => { setIsFeaturesMenuOpen(true); setIsSidebarOpen(false); }}
             className="w-full mb-4 bg-slate-800/50 hover:bg-indigo-600/10 border border-slate-700/60 hover:border-indigo-500/30 rounded-lg py-2 px-3 text-xs text-slate-300 font-medium flex items-center justify-center gap-2 transition-all group"
@@ -787,7 +843,7 @@ export default function Home() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* ⏱️ 縱向滾動時間軸：只紀錄使用者的問題 */}
+              {/* ⏱️ 縱向滾動時間軸 */}
               <aside className="hidden sm:flex absolute right-2 top-4 bottom-4 w-4 bg-slate-800/20 backdrop-blur-sm rounded-full flex-col items-center py-4 overflow-y-auto space-y-4 border border-slate-800/40 scrollbar-none z-30">
                 {currentChat.messages.map((msg, i) => {
                   if (msg.role !== 'user') return null;
@@ -815,7 +871,7 @@ export default function Home() {
                 {attachedImage && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <img src={attachedImage} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-slate-400">圖片已壓縮 (限 1MB 內)</span>
+                    <span className="text-[10px] md:text-[11px] text-slate-400">圖片已壓縮 (限 4MB 內)</span>
                     <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
