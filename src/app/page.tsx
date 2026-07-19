@@ -21,6 +21,11 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
+  // 🔐 邀請密鑰專用防禦狀態
+  const [isVerified, setIsVerified] = useState<boolean | null>(null); 
+  const [inviteCodeInput, setInviteCodeInput] = useState('');
+  const [verifying, setVerifying] = useState(false);
+  
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // 1. 初始化與狀態監聽
@@ -32,6 +37,7 @@ export default function Home() {
       if (user) {
         fetchFolders();
         fetchConversations();
+        checkUserVerification(user.id);
       }
     };
     checkUser();
@@ -46,6 +52,9 @@ export default function Home() {
       if (currentUser) {
         fetchFolders();
         fetchConversations();
+        checkUserVerification(currentUser.id);
+      } else {
+        setIsVerified(null);
       }
     });
     return () => subscription.unsubscribe();
@@ -60,6 +69,65 @@ export default function Home() {
   const saveApiKey = (key: string) => {
     setApiKey(key);
     localStorage.setItem('gemini_api_key', key);
+  };
+
+  // 🔐 檢查當前登入使用者是否已經成功綁定密鑰
+  const checkUserVerification = async (userId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('invite_codes')
+        .select('code')
+        .eq('assigned_to_user_id', userId);
+
+      if (data && data.length > 0) {
+        setIsVerified(true); // 已通過，放行
+      } else {
+        setIsVerified(false); // 未通過，攔截
+      }
+    } catch (err) {
+      setIsVerified(false);
+    }
+  };
+
+  // 🔐 提交驗證密鑰邏輯
+  const handleVerifyInviteCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteCodeInput.trim() || !user || verifying) return;
+    setVerifying(true);
+
+    try {
+      // 1. 查詢該密鑰是否存在且尚未被佔用
+      const { data: codeData, error: fetchError } = await supabase
+        .from('invite_codes')
+        .select('*')
+        .eq('code', inviteCodeInput.trim())
+        .eq('is_used', false)
+        .single();
+
+      if (fetchError || !codeData) {
+        alert('無效的存取密鑰，或者該密鑰已被其他人佔用了！');
+        setVerifying(false);
+        return;
+      }
+
+      // 2. 將此密鑰標記為已使用，並一對一綁定當前使用者的 UID
+      const { error: updateError } = await supabase
+        .from('invite_codes')
+        .update({ 
+          is_used: true, 
+          assigned_to_user_id: user.id 
+        })
+        .eq('code', inviteCodeInput.trim());
+
+      if (updateError) throw updateError;
+
+      alert('驗證成功！歡迎加入私有工作區。');
+      setIsVerified(true);
+    } catch (err: any) {
+      alert(`密鑰鎖定失敗: ${err.message}`);
+    } finally {
+      setVerifying(false);
+    }
   };
 
   // 2. 資料庫撈取邏輯
@@ -124,7 +192,7 @@ export default function Home() {
         parts: [{ text: msg.content }]
       }));
 
-      // 呼叫最新的 gemini-2.5-flash 模型
+      // 更換為相容新使用者金鑰的通用主力模型 gemini-3.5-flash
       const response = await ai.models.generateContent({
         model: 'gemini-3.5-flash',
         contents: contents,
@@ -158,13 +226,14 @@ export default function Home() {
 
   if (loading) return <div className="flex h-screen items-center justify-center bg-slate-900 text-white"><p className="text-lg animate-pulse">載入中...</p></div>;
 
+  // 第一關：未登入者，強制攔截顯示登入
   if (!user) {
     return (
       <main className="flex h-screen flex-col items-center justify-center bg-slate-900 text-white p-4">
         <div className="w-full max-w-md rounded-2xl bg-slate-800 p-8 text-center shadow-xl border border-slate-700">
           <h1 className="mb-2 text-2xl font-bold tracking-tight">Gemini 對話管理助手</h1>
           <p className="mb-8 text-sm text-slate-400">登入後即可開始將對話分類並同步至雲端</p>
-          <button onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: 'http://localhost:3000' } })} className="flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-3 font-semibold text-slate-900 transition-all hover:bg-slate-100">
+          <button onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })} className="flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-3 font-semibold text-slate-900 transition-all hover:bg-slate-100">
             使用 Google 帳號登入
           </button>
         </div>
@@ -172,6 +241,49 @@ export default function Home() {
     );
   }
 
+  // 第二關：登入了但沒有密鑰資質，顯示密鑰鎖定彈窗
+  if (isVerified === false) {
+    return (
+      <main className="flex h-screen flex-col items-center justify-center bg-slate-950 text-white p-4">
+        <div className="w-full max-w-md rounded-2xl bg-slate-900 p-8 shadow-xl border border-slate-800">
+          <div className="flex items-center gap-2 mb-3">
+            <span className="text-2xl">🔐</span>
+            <h2 className="text-xl font-bold text-slate-100">請輸入邀請密鑰</h2>
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed mb-6">
+            本工作區目前處於不公開內測階段，為保障系統資源，您必須輸入由開發者分發的專屬密鑰才可解鎖核心面板。
+          </p>
+          <form onSubmit={handleVerifyInviteCode} className="space-y-4">
+            <input 
+              type="text" 
+              placeholder="請貼上您的專屬密鑰..." 
+              value={inviteCodeInput} 
+              onChange={(e) => setInviteCodeInput(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 focus:outline-none focus:border-indigo-500"
+            />
+            <div className="flex gap-2">
+              <button 
+                type="submit" 
+                disabled={verifying || !inviteCodeInput.trim()}
+                className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors disabled:opacity-40"
+              >
+                {verifying ? '安全校驗中...' : '確認驗證並綁定'}
+              </button>
+              <button 
+                type="button" 
+                onClick={() => supabase.auth.signOut()}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs px-3 rounded-lg transition-colors border border-slate-700"
+              >
+                登出
+              </button>
+            </div>
+          </form>
+        </div>
+      </main>
+    );
+  }
+
+  // 第三關：通過驗證 (isVerified === true)，渲染完整對話工作區 UI
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
       {/* 側邊欄 Sidebar */}
