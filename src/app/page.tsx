@@ -19,8 +19,8 @@ export default function Home() {
   const [currentChat, setCurrentChat] = useState<Conversation | null>(null);
 
   // 輸入與控制狀態
-  const [newFolderName, setNewFolderName] = useState('');
   const [inputMessage, setInputMessage] = useState('');
+  const [newFolderName, setNewFolderName] = useState('');
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
@@ -32,8 +32,9 @@ export default function Home() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [verifying, setVerifying] = useState(false);
 
-  // 🖼️ 圖片主動轉 Base64 暫存狀態
-  const [attachedImage, setAttachedImage] = useState<string | null>(null);
+  // 🖼️ 全新：Supabase Storage 雲端圖片網址狀態（徹底取代肥大 Base64 快取）
+  const [attachedImageUrl, setAttachedImageUrl] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // 📱 行動端側邊欄收闔控制狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
@@ -48,7 +49,7 @@ export default function Home() {
   const [firstQuestionTitle, setFirstQuestionTitle] = useState('');
   const [isImporting, setIsImporting] = useState(false);
 
-  // 💡 全新加入：用戶引導彈窗狀態
+  // 💡 用戶引導彈窗狀態
   const [activeGuide, setActiveGuide] = useState<'api' | 'compress' | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -163,22 +164,41 @@ export default function Home() {
     }
   };
 
-  // 🖼️ 處理圖片主動轉成 Base64
-  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // 🖼️ 核心升級：放棄肥大 Base64，全自動流式上傳至 Supabase Storage
+  const handleImageChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (!file || !user) return;
 
-    // 🛡️ 應使用者要求，將上傳防禦限制放寬至 4MB 以內
+    // 應要求放寬限額至 4MB
     if (file.size > 4 * 1024 * 1024) {
-      alert('圖片大小超過 4MB 限制！請查看擴充功能裡的「圖片壓縮引導」來縮小體積，以保護您的雲端純文字資料庫。');
+      alert('圖片大小超過 4MB 限制！請縮小體積後重新上傳。');
       return;
     }
 
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setAttachedImage(reader.result as string);
-    };
-    reader.readAsDataURL(file);
+    setIsUploadingImage(true);
+    try {
+      // 建立時間戳記檔案名，防止重複衝突
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+
+      // 1. 直推上傳至你現成的 Supabase 'images' 儲存桶
+      const { data, error } = await supabase.storage
+        .from('images')
+        .upload(fileName, file, { cacheControl: '3600', upsert: true });
+
+      if (error) throw error;
+
+      // 2. 獲取該儲存桶內檔案的公開訪問 URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('images')
+        .getPublicUrl(fileName);
+
+      setAttachedImageUrl(publicUrl);
+    } catch (err: any) {
+      alert(`儲存桶上傳失敗: ${err.message}\n請確保您的 Supabase 內已建立名為 'images' 且權限為 Public 的 Bucket！`);
+    } finally {
+      setIsUploadingImage(false);
+    }
   };
 
   // 2. 資料庫撈取邏輯
@@ -338,11 +358,12 @@ export default function Home() {
   // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!inputMessage.trim() && !attachedImage) || !currentChat || !apiKey || isSending) return;
+    if ((!inputMessage.trim() && !attachedImageUrl) || !currentChat || !apiKey || isSending) return;
 
+    // 🔗 輕量化網址落盤：如果附帶雲端圖片網址，將其當作極短字串標記黏在文字後面
     let finalContent = inputMessage.trim();
-    if (attachedImage) {
-      finalContent = `${inputMessage.trim()}\n\n[IMAGE_DATA:${attachedImage}]`;
+    if (attachedImageUrl) {
+      finalContent = `${inputMessage.trim()}\n\n[IMAGE_URL:${attachedImageUrl}]`;
     }
 
     const userMessage = { role: 'user', content: finalContent };
@@ -351,42 +372,53 @@ export default function Home() {
     setCurrentChat({ ...currentChat, messages: updatedMessages });
     const originalInput = inputMessage.trim();
     setInputMessage('');
-    setAttachedImage(null); 
+    setAttachedImageUrl(null); // 立即釋放前端狀態
     setIsSending(true);
 
     try {
       const ai = new GoogleGenAI({ apiKey: apiKey });
       
-      const contents = updatedMessages.map(msg => {
+      const contents = await Promise.all(updatedMessages.map(async (msg) => {
         if (msg.role === 'model') {
           return { role: 'model', parts: [{ text: msg.content }] };
         }
 
         const text = msg.content;
-        const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+))\]/;
-        const match = text.match(imageRegex);
+        // 🔬 同步支援解析 IMAGE_URL 標記
+        const urlRegex = /\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/;
+        const match = text.match(urlRegex);
 
         const parts: any[] = [];
         
         if (match) {
-          const cleanText = text.replace(imageRegex, '').trim();
+          const cleanText = text.replace(urlRegex, '').trim();
           if (cleanText) parts.push({ text: cleanText });
           
-          const rawBase64 = match[2];
-          const mimeType = match[1].match(/[^:]\w+\/[\w-+\.]+(?=;|,)/)?.[0] || "image/jpeg";
-          
-          parts.push({
-            inlineData: {
-              data: rawBase64,
-              mimeType: mimeType
-            }
-          });
+          const targetUrl = match[1];
+          try {
+            // 🌐 線上流式轉型：後台臨時抓取儲存桶網址轉成 Gemini SDK 看得懂的二進位快取
+            const imageResp = await fetch(targetUrl);
+            const blob = await imageResp.blob();
+            const buffer = await blob.arrayBuffer();
+            const base64String = btoa(
+              new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+            );
+
+            parts.push({
+              inlineData: {
+                data: base64String,
+                mimeType: blob.type || "image/jpeg"
+              }
+            });
+          } catch (fetchErr) {
+            console.error("流式抓取儲存桶圖片失敗:", fetchErr);
+          }
         } else {
           parts.push({ text: text });
         }
 
         return { role: 'user', parts: parts };
-      });
+      }));
 
       const response = await ai.models.generateContent({
         model: selectedModel,
@@ -499,9 +531,7 @@ export default function Home() {
               </button>
             </div>
 
-            {/* 🛠️ 擴充功能選單矩陣 */}
             <div className="grid grid-cols-1 gap-2.5 py-1">
-              {/* 按鈕 1：歷史對話重組 */}
               <button
                 onClick={() => { setIsImportModalOpen(true); setIsFeaturesMenuOpen(false); }}
                 className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
@@ -513,7 +543,6 @@ export default function Home() {
                 </div>
               </button>
 
-              {/* 按鈕 2：全新加入的 API Key 申請指南 */}
               <button
                 onClick={() => { setActiveGuide('api'); setIsFeaturesMenuOpen(false); }}
                 className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
@@ -525,7 +554,6 @@ export default function Home() {
                 </div>
               </button>
 
-              {/* 按鈕 3：全新加入的圖片過大處理解決方案 */}
               <button
                 onClick={() => { setActiveGuide('compress'); setIsFeaturesMenuOpen(false); }}
                 className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
@@ -607,7 +635,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 💡 全新加入：二級靜態用戶引導控制艙 (API Key / 圖片壓縮) */}
+      {/* 💡 二級靜態用戶引導控制艙 */}
       {activeGuide && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -623,25 +651,22 @@ export default function Home() {
               </button>
             </div>
 
-            {/* 📑 引導文案渲染區 */}
             <div className="text-xs text-slate-300 leading-relaxed space-y-3 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
               {activeGuide === 'api' ? (
                 <>
                   <p className="font-semibold text-indigo-400">只需三步，即可取得終身免費的 Gemini 核心金鑰：</p>
                   <ol className="list-decimal pl-4 space-y-2 text-slate-400">
                     <li>點擊前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官方網站</a> 並使用任意 Google 帳號登入。</li>
-                    <li>點擊左上角的 <span className="text-slate-200 font-semibold">"Get API key"</span> 按鈕。</li>
-                    <li>點擊 <span className="text-indigo-400 font-semibold">"Create API key"</span>，建立成功後將其複製，並貼回我們工作區左側的密鑰輸入框內即可！</li>
+                    <li>點擊左上角的 "Get API key" 按鈕。</li>
+                    <li>點擊 "Create API key"，建立成功後將其複製，並貼回我們工作區左側的密鑰輸入框內即可！</li>
                   </ol>
-                  <p className="text-[10px] text-slate-500 bg-slate-950/40 p-2 rounded border border-slate-800/60 leading-normal">⚠️ 提示：免費額度限每分鐘 15 次請求，日常使用、刷題、寫程式絕對綽綽有餘，金鑰會完全加密保存在您的瀏覽器快取中。</p>
                 </>
               ) : (
                 <>
-                  <p className="font-semibold text-emerald-400">為了防止純文字資料庫在一夜之間被撐爆，本站設有 4MB 的硬性安全限制。如果圖片太大家可以這樣解決：</p>
+                  <p className="font-semibold text-emerald-400">為了防止雲端儲存桶在一夜之間被不小心撐爆，本站設有 4MB 的安全限制。如果圖片太大家可以這樣解決：</p>
                   <ul className="list-disc pl-4 space-y-2 text-slate-400">
                     <li><span className="text-slate-200 font-semibold">手機端截圖處理</span>：直接將手機截圖進行適度裁切，只留下需要發問的代碼或算式區域，體積通常會瞬間暴跌 80%！</li>
-                    <li><span className="text-slate-200 font-semibold">使用免費線上壓縮</span>：建議將相片上傳至常見的圖檔縮小工具，將品質調至 75%，肉眼看不出差別但體積能輕鬆壓到 1MB 以下。</li>
-                    <li><span className="text-slate-200 font-semibold">降檔解析度</span>：避免直接發送 4K 原圖，將解析度降為 1080p，即可完美兼顧清晰度與資料庫空間！</li>
+                    <li><span className="text-slate-200 font-semibold">降檔解析度</span>：避免直接發送 4K 原圖，將解析度降為 1080p，即可完美兼顧清晰度與伺服器硬碟空間！</li>
                   </ul>
                 </>
               )}
@@ -746,7 +771,7 @@ export default function Home() {
                       <button onClick={() => { setCurrentChat(c); setIsSidebarOpen(false); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
                         <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                         <span className="truncate flex-1 max-w-[130px]">
-                          {c.title.includes('[IMAGE_DATA:') ? c.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : c.title}
+                          {c.title.includes('[IMAGE_URL:') ? c.title.split('[IMAGE_URL:')[0].trim() || '圖片對話' : c.title}
                         </span>
                       </button>
                       <button onClick={(e) => handleDeleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all">
@@ -779,10 +804,10 @@ export default function Home() {
                   </svg>
                 </button>
                 <h3 className="font-semibold text-xs md:text-sm text-slate-200 truncate">
-                  {currentChat.title.includes('[IMAGE_DATA:') ? currentChat.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : currentChat.title}
+                  {currentChat.title.includes('[IMAGE_URL:') ? currentChat.title.split('[IMAGE_URL:')[0].trim() || '圖片對話' : currentChat.title}
                 </h3>
               </div>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">雲端同步</span>
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">儲存桶分流中</span>
             </header>
 
             {/* 複合彈性格局 */}
@@ -794,17 +819,18 @@ export default function Home() {
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
                 ) : (
                   currentChat.messages.map((msg, i) => {
-                    const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/;
-                    const match = msg.content.match(imageRegex);
-                    const cleanText = msg.content.replace(imageRegex, '').trim();
+                    const urlRegex = /\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/;
+                    const match = msg.content.match(urlRegex);
+                    const cleanText = msg.content.replace(urlRegex, '').trim();
 
                     return (
                       <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {msg.role === 'user' ? (
                           <div className="max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm bg-indigo-600 text-white rounded-br-none shadow-md">
+                            {/* 🔬 完美解包：直接引用 Supabase Storage 的公開 URL 渲染縮圖 */}
                             {match && (
                               <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
-                                <img src={match[1]} alt="對話夾帶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
+                                <img src={match[1]} alt="雲端儲存桶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
                               </div>
                             )}
                             {cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>}
@@ -848,7 +874,7 @@ export default function Home() {
                 {currentChat.messages.map((msg, i) => {
                   if (msg.role !== 'user') return null;
 
-                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題';
+                  const previewText = msg.content.replace(/\[IMAGE_URL:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題';
                   return (
                     <button
                       key={i}
@@ -868,11 +894,19 @@ export default function Home() {
             {/* 訊息輸入欄 */}
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
-                {attachedImage && (
+                
+                {/* 狀態連鎖：圖片選取或上傳中的狀態反饋 */}
+                {isUploadingImage && (
+                  <div className="text-xs text-indigo-400 animate-pulse bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
+                    ⏳ 正在將原圖直推至 Supabase Storage 儲存桶...
+                  </div>
+                )}
+
+                {attachedImageUrl && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
-                    <img src={attachedImage} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-slate-400">圖片已壓縮 (限 4MB 內)</span>
-                    <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
+                    <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
+                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片上傳成功！已取得獨立雲端 CDN 網址</span>
+                    <button type="button" onClick={() => setAttachedImageUrl(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
 
@@ -881,11 +915,11 @@ export default function Home() {
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                     </svg>
-                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending} />
+                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImage) || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl) || isSending || !apiKey || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
             </form>
