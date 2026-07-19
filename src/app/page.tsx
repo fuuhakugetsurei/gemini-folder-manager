@@ -38,6 +38,9 @@ export default function Home() {
   // 📱 行動端側邊欄收闔控制狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
+  // ⚙️ 新增：「其他功能」總中控艙狀態
+  const [isFeaturesMenuOpen, setIsFeaturesMenuOpen] = useState(false);
+
   // 📥 匯入控制艙（Modal）狀態
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importedFileName, setImportedFileName] = useState<string | null>(null);
@@ -214,7 +217,6 @@ export default function Home() {
     }
   };
 
-  // 🗑️ 刪除資料夾邏輯
   const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (!confirm('確定要刪除此資料夾嗎？裡面的所有對話也會一併消失喔！')) return;
@@ -232,7 +234,6 @@ export default function Home() {
     }
   };
 
-  // 🗑️ 刪除單一對話邏輯
   const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (!confirm('確定要刪除這場對話紀錄嗎？')) return;
@@ -248,7 +249,7 @@ export default function Home() {
     }
   };
 
-  // 📥 核心更新：主動上傳並讀取 Markdown 檔案邏輯
+  // 📥 主動上傳並讀取 Markdown 檔案邏輯
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -260,7 +261,6 @@ export default function Home() {
       const text = event.target?.result as string;
       if (!text) return;
 
-      // 🔬 精準切割出所有的提問與回應區塊
       const sectionRegex = /(# you asked|# gemini response)([\s\S]*?)(?=(?:# you asked|# gemini response|Powered by \[AI Exporter\]|$))/g;
       const messagesArray: { role: string; content: string }[] = [];
       let titleTemp = '';
@@ -482,7 +482,50 @@ export default function Home() {
         <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity" />
       )}
 
-      {/* 📥 懸浮暗黑科技感匯入控制艙（全面進化為極簡檔案上傳流） */}
+      {/* ⚙️ 核心一級嵌套視窗：「其他功能總控制艙」 */}
+      {isFeaturesMenuOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">⚙️</span>
+                <h3 className="font-bold text-sm md:text-base text-slate-200">擴充功能控制台</h3>
+              </div>
+              <button onClick={() => setIsFeaturesMenuOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
+                關閉面板 ✕
+              </button>
+            </div>
+
+            {/* 功能矩陣導覽區：未來所有的客製化新功能按鈕都放在這裡 */}
+            <div className="grid grid-cols-1 gap-2 py-2">
+              <button
+                onClick={() => {
+                  setIsImportModalOpen(true); // 開啟二級嵌套的匯入艙
+                  setIsFeaturesMenuOpen(false); // 自動關閉一級選單，保持視覺專注
+                }}
+                className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
+              >
+                <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">📥</span>
+                <div>
+                  <p className="text-xs font-semibold text-slate-200">歷史對話重組匯入</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">支援上傳 AI Exporter 的 .md 檔案無縫復活對話</p>
+                </div>
+              </button>
+
+              {/* 💡 未來的新功能預留坑位範例： */}
+              <div className="w-full bg-slate-950/40 border border-slate-800/40 rounded-xl p-3 text-left flex items-center gap-3 opacity-40 select-none">
+                <span className="text-xl bg-slate-900/40 p-2 rounded-lg">🚀</span>
+                <div>
+                  <p className="text-xs font-semibold text-slate-400">研擬中新擴充組件</p>
+                  <p className="text-[10px] text-slate-600 mt-0.5">保持主介面極簡，新功能不霸佔側邊欄</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 📥 核心二級嵌套視窗：Markdown 檔案上傳解構艙 */}
       {isImportModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
           <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -491,12 +534,19 @@ export default function Home() {
                 <span className="text-xl">📥</span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">歷史對話重組控制艙</h3>
               </div>
-              <button onClick={() => { setIsImportModalOpen(false); setImportedFileName(null); setParsedMessages([]); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
-                關閉艙門 ✕
+              <button 
+                onClick={() => { 
+                  setIsImportModalOpen(false); 
+                  setImportedFileName(null); 
+                  setParsedMessages([]); 
+                  setIsFeaturesMenuOpen(true); // 貼心設計：關閉匯入時，自動彈回一級控制台
+                }} 
+                className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded"
+              >
+                返回上一層 ✕
               </button>
             </div>
 
-            {/* 提示備忘錄，警告未選取資料夾的使用者 */}
             {!selectedFolderId ? (
               <div className="bg-amber-500/10 text-amber-400 text-xs p-3 rounded-xl border border-amber-500/20 leading-relaxed">
                 ⚠️ **防禦警報：** 您目前尚未在左側側邊欄點選任何一個資料夾。請先關閉視窗，點選目的地資料夾後再來上傳，否則雲端匯入按鈕會維持鎖定狀態！
@@ -507,7 +557,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* 📁 科技感檔案選取控制區 */}
             <div className="w-full">
               <label className={`w-full h-40 bg-slate-950 rounded-xl border border-dashed flex flex-col items-center justify-center gap-2 cursor-pointer transition-all p-4 text-center
                 ${importedFileName ? 'border-emerald-500/50 bg-emerald-950/5' : 'border-slate-800 hover:border-indigo-500/50 hover:bg-slate-900/40'}`}
@@ -532,15 +581,19 @@ export default function Home() {
             <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={() => { setIsImportModalOpen(false); setImportedFileName(null); setParsedMessages([]); }}
+                onClick={() => { 
+                  setIsImportModalOpen(false); 
+                  setImportedFileName(null); 
+                  setParsedMessages([]); 
+                  setIsFeaturesMenuOpen(true); 
+                }}
                 className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors"
               >
-                取消
+                返回
               </button>
               <button
                 type="button"
                 onClick={handleExecuteImport}
-                // 🔒 當未選取資料夾、未讀取到檔案或正在匯入時，無情鎖定
                 disabled={isImporting || parsedMessages.length === 0 || !selectedFolderId}
                 className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-30 disabled:hover:bg-indigo-600 text-white text-xs font-semibold px-5 py-2 rounded-lg transition-colors"
               >
@@ -585,13 +638,13 @@ export default function Home() {
             </div>
           </div>
 
-          {/* 📥 獨立匯入按鈕 */}
+          {/* ⚙️ 完美防禦組件：側邊欄只留下一顆乾淨的擴充入口，維持介面最高簡潔度 */}
           <button 
-            onClick={() => { setIsImportModalOpen(true); setIsSidebarOpen(false); }}
-            className="w-full mb-4 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 rounded-lg py-2 px-3 text-xs text-indigo-300 font-medium flex items-center justify-center gap-2 transition-all"
+            onClick={() => { setIsFeaturesMenuOpen(true); setIsSidebarOpen(false); }}
+            className="w-full mb-4 bg-slate-800/50 hover:bg-indigo-600/10 border border-slate-700/60 hover:border-indigo-500/30 rounded-lg py-2 px-3 text-xs text-slate-300 font-medium flex items-center justify-center gap-2 transition-all group"
           >
-            <span>📥</span>
-            <span>匯入歷史對話文檔</span>
+            <span className="group-hover:rotate-45 transition-transform duration-300">⚙️</span>
+            <span>更多擴充功能組件</span>
           </button>
 
           {/* API Key 設定區 */}
