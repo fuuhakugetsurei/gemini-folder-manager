@@ -92,7 +92,7 @@ export default function Home() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ✨【防禦性自動捲動修復】改用 nearest 限制滾動範圍向外擴散，防止外層網頁上捲
+  // 防禦性自動捲動修復
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [currentChat?.messages]);
@@ -458,7 +458,6 @@ export default function Home() {
       const modelResponseText = response.text || '（未能取得回應）';
       const finalMessages = [...updatedMessages, { role: 'model', content: modelResponseText }];
 
-      // ✨【修復點】擷取 nextChatState 的最新標題，改掉原先初始化前引用的 ReferenceError 臭蟲
       const currentChatTitle = nextChatState.title;
       const currentChatIsoString = new Date().toISOString();
 
@@ -549,21 +548,51 @@ export default function Home() {
         <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity" />
       )}
 
-      {/* ⚙️ 一級控制艙：「其他功能總控制台」 */}
+      {/* ⚙️ 一級控制艙：整合了「模型切換」與「API Key管理」的超級擴充功能面板 */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in">
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-xl">⚙️</span>
-                <h3 className="font-bold text-sm md:text-base text-slate-200">擴充功能控制台</h3>
+                <h3 className="font-bold text-sm md:text-base text-slate-200">擴充功能與核心設定艙</h3>
               </div>
               <button onClick={() => setIsFeaturesMenuOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
                 關閉面板 ✕
               </button>
             </div>
 
-            <div className="grid grid-cols-1 gap-2.5 py-1">
+            {/* ✨【整合項目 1】將模型切換移入彈窗頂部 */}
+            <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心選擇</label>
+              <select 
+                value={selectedModel} 
+                onChange={(e) => saveSelectedModel(e.target.value)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·次世代高流速)</option>
+                <option value="gemini-3.5-pro">Gemini 3.5 Pro (深度推理·專家代碼)</option>
+              </select>
+              <p className="text-[10px] text-slate-500 leading-tight px-0.5">
+                {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：全新 3.5 Flash 核心，極速回應，全方位覆蓋日常開發與複雜學術任務。"}
+                {selectedModel === 'gemini-3.5-pro' && "🧠 提示：3.5 Pro 重推推理引擎，專攻高難度演算法、數理證明與深層邏輯解構。"}
+              </p>
+            </div>
+
+            {/* ✨【整合項目 2】將 API KEY 設定區移入彈窗內部 */}
+            <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
+              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Gemini API Key 憑證</label>
+              <input 
+                type="password" 
+                placeholder="請貼上您的 AI Studio 金鑰..." 
+                value={apiKey} 
+                onChange={(e) => saveApiKey(e.target.value)} 
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500" 
+              />
+            </div>
+
+            {/* 其他輔助功能組件 */}
+            <div className="grid grid-cols-1 gap-2.5 pt-1">
               <button
                 onClick={() => { setIsImportModalOpen(true); setIsFeaturesMenuOpen(false); }}
                 className="w-full bg-slate-950 hover:bg-slate-800/60 border border-slate-800 rounded-xl p-3 text-left transition-all flex items-center gap-3 group"
@@ -723,54 +752,30 @@ export default function Home() {
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
         <div className="p-4 overflow-y-auto flex-1">
-          <div className="flex items-center justify-between mb-4">
+          {/* ✨【格局修正】將更多擴充功能組件縮小為 ⚙️ 圖標，緊貼標題欄最右側 */}
+          <div className="flex items-center justify-between mb-4 border-b border-slate-800/50 pb-2">
             <h2 className="text-xl font-bold text-indigo-400 tracking-wide">對話工作區</h2>
-            <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white p-1 text-sm">
-              ✕
-            </button>
-          </div>
-          
-          {/* 模型切換區 - 全面替換為 3 系列核心 */}
-          <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60 space-y-1.5">
-            <div>
-              <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心</label>
-              <select 
-                value={selectedModel} 
-                onChange={(e) => saveSelectedModel(e.target.value)}
-                className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+            <div className="flex items-center gap-1">
+              <button 
+                onClick={() => { setIsFeaturesMenuOpen(true); setIsSidebarOpen(false); }}
+                title="更多擴充功能與核心組件設定"
+                className="p-1.5 rounded-lg bg-slate-800/60 hover:bg-indigo-600/20 text-slate-400 hover:text-indigo-400 border border-slate-700/50 hover:border-indigo-500/30 transition-all duration-200 group flex items-center justify-center"
               >
-                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·次世代高流速)</option>
-                <option value="gemini-3.5-pro">Gemini 3.5 Pro (深度推理·專家代碼)</option>
-              </select>
+                <span className="text-sm group-hover:rotate-45 transition-transform duration-300">⚙️</span>
+              </button>
+              <button onClick={() => setIsSidebarOpen(false)} className="md:hidden text-slate-400 hover:text-white p-1 text-sm ml-1">
+                ✕
+              </button>
             </div>
-            <div className="text-[10px] text-slate-500 leading-tight px-1">
-              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：全新 3.5 Flash 核心，極速回應，全方位覆蓋日常開發與複雜學術任務。"}
-              {selectedModel === 'gemini-3.5-pro' && "🧠 提示：3.5 Pro 重推推理引擎，專攻高難度演算法、數理證明與深層邏輯解構。"}
-            </div>
-          </div>
-
-          {/* ⚙️ 核心功能入口 */}
-          <button 
-            onClick={() => { setIsFeaturesMenuOpen(true); setIsSidebarOpen(false); }}
-            className="w-full mb-4 bg-slate-800/50 hover:bg-indigo-600/10 border border-slate-700/60 hover:border-indigo-500/30 rounded-lg py-2 px-3 text-xs text-slate-300 font-medium flex items-center justify-center gap-2 transition-all group"
-          >
-            <span className="group-hover:rotate-45 transition-transform duration-300">⚙️</span>
-            <span>更多擴充功能組件</span>
-          </button>
-
-          {/* API Key 設定區 */}
-          <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60">
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Gemini API Key</label>
-            <input type="password" placeholder="貼上 AI Studio 金鑰..." value={apiKey} onChange={(e) => saveApiKey(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500" />
           </div>
 
           {/* 新增資料夾 */}
           <form onSubmit={handleCreateFolder} className="mb-4 flex gap-1">
-            <input type="text" placeholder="新建資料夾..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none" />
-            <button type="submit" disabled={!newFolderName.trim()} className="bg-indigo-600 px-2 py-1 rounded text-xs">+</button>
+            <input type="text" placeholder="新建資料夾..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500 text-slate-200" />
+            <button type="submit" disabled={!newFolderName.trim()} className="bg-indigo-600 px-2 py-1 rounded text-xs hover:bg-indigo-700 transition-colors">+</button>
           </form>
 
-          {/* 資料夾清單 */}
+          {/* 資料夾與對話清單 */}
           <div className="space-y-4">
             <div>
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p>
@@ -840,10 +845,10 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">智能雙流分流中</span>
             </header>
 
-            {/* 複合彈性格局 - ✨【修復盲點 1】使用 flex-1 h-0 徹底將高度困在這一層，絕不溢出到外層 window */}
+            {/* 複合彈性格局 */}
             <div className="flex-1 h-0 flex flex-row relative">
               
-              {/* 💬 核心對話框 - ✨【修復盲點 2】調整右側 padding 留白，確保右方的時間軸有獨立空間，且使用者訊息不套 LaTeX */}
+              {/* 💬 核心對話框 */}
               <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-10 h-full">
                 {currentChat.messages.length === 0 ? (
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片、原始碼或文字檔開始聊吧。</div>
