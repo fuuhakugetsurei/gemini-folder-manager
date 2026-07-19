@@ -182,6 +182,41 @@ export default function Home() {
     }
   };
 
+  // 🗑️ 刪除資料夾邏輯
+  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 防止觸發點擊資料夾的切換事件
+    if (!confirm('確定要刪除此資料夾嗎？裡面的所有對話也會一併消失喔！')) return;
+
+    const { error } = await supabase.from('folders').delete().eq('id', folderId);
+    if (!error) {
+      setFolders(folders.filter(f => f.id !== folderId));
+      if (selectedFolderId === folderId) {
+        setSelectedFolderId(null);
+        setCurrentChat(null);
+      }
+      // 同步過濾本地的對話歷史狀態
+      setConversations(conversations.filter(c => c.folder_id !== folderId));
+    } else {
+      alert(`刪除資料夾失敗: ${error.message}`);
+    }
+  };
+
+  // 🗑️ 刪除單一對話邏輯
+  const handleDeleteChat = async (chatId: string, e: React.MouseEvent) => {
+    e.stopPropagation(); // 防止觸發切換到該對話的事件
+    if (!confirm('確定要刪除這場對話紀錄嗎？')) return;
+
+    const { error } = await supabase.from('conversations').delete().eq('id', chatId);
+    if (!error) {
+      setConversations(conversations.filter(c => c.id !== chatId));
+      if (currentChat?.id === chatId) {
+        setCurrentChat(null);
+      }
+    } else {
+      alert(`刪除對話失敗: ${error.message}`);
+    }
+  };
+
   // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -343,10 +378,16 @@ export default function Home() {
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p>
               <div className="space-y-1">
                 {folders.map(f => (
-                  <button key={f.id} onClick={() => { setSelectedFolderId(f.id); setCurrentChat(null); }} className={`flex w-full items-center gap-2 px-2 py-1.5 rounded text-xs font-medium transition-colors ${selectedFolderId === f.id ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800'}`}>
-                    <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                    <span className="truncate">{f.name}</span>
-                  </button>
+                  <div key={f.id} className="group flex items-center justify-between rounded text-xs font-medium transition-colors border border-transparent">
+                    <button onClick={() => { setSelectedFolderId(f.id); setCurrentChat(null); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${selectedFolderId === f.id ? 'bg-indigo-600/30 text-indigo-300 border-l border-y border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800'}`}>
+                      <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
+                      <span className="truncate max-w-[130px]">{f.name}</span>
+                    </button>
+                    {/* 🗑️ 資料夾刪除按鈕，Hover 時才顯現 */}
+                    <button onClick={(e) => handleDeleteFolder(f.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all" title="刪除資料夾">
+                      🗑️
+                    </button>
+                  </div>
                 ))}
               </div>
             </div>
@@ -360,10 +401,16 @@ export default function Home() {
                 </div>
                 <div className="space-y-1">
                   {conversations.filter(c => c.folder_id === selectedFolderId).map(c => (
-                    <button key={c.id} onClick={() => setCurrentChat(c)} className={`flex w-full items-center gap-2 px-2 py-1.5 rounded text-xs text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
-                      <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                      <span className="truncate flex-1">{c.title}</span>
-                    </button>
+                    <div key={c.id} className="group flex items-center justify-between rounded text-xs transition-colors border border-transparent">
+                      <button onClick={() => setCurrentChat(c)} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
+                        <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                        <span className="truncate flex-1 max-w-[130px]">{c.title}</span>
+                      </button>
+                      {/* 🗑️ 對話單一刪除按鈕，Hover 時才顯現 */}
+                      <button onClick={(e) => handleDeleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all" title="刪除對話">
+                        🗑️
+                      </button>
+                    </div>
                   ))}
                 </div>
               </div>
