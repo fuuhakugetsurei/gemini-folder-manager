@@ -152,8 +152,9 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (file.size > 4 * 1024 * 1024) {
-      alert('這張圖片太大了！請選擇 4MB 以下的圖片，免得撐爆資料庫文字欄位。');
+    // 🛡️ 限制 1MB，防止過大的 Base64 檔案塞爆純文字資料庫容量
+    if (file.size > 1 * 1024 * 1024) {
+      alert('圖片大小超過 1MB 限制！為了幫您的雲端資料庫省空間，請選擇較小的圖片。');
       return;
     }
 
@@ -226,7 +227,7 @@ export default function Home() {
     e.stopPropagation(); // 防止觸發切換到該對話的事件
     if (!confirm('確定要刪除這場對話紀錄嗎？')) return;
 
-    const { error } = await supabase.from('conversations').delete().eq('id', chatId);
+    const { error = null } = await supabase.from('conversations').delete().eq('id', chatId);
     if (!error) {
       setConversations(conversations.filter(c => c.id !== chatId));
       if (currentChat?.id === chatId) {
@@ -491,72 +492,101 @@ export default function Home() {
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">雲端同步中</span>
             </header>
 
-            {/* 訊息渲染區 */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              {currentChat.messages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
-              ) : (
-                currentChat.messages.map((msg, i) => {
-                  // 渲染前動態解包，把隱藏的圖片標記切出來，好在前端渲染縮圖
-                  const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/;
-                  const match = msg.content.match(imageRegex);
-                  const cleanText = msg.content.replace(imageRegex, '').trim();
+            {/* 💡 包含訊息區與右側時間軸的複合彈性格局 */}
+            <div className="flex-1 flex flex-row overflow-hidden h-full">
+              
+              {/* 💬 核心訊息渲染區 */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                {currentChat.messages.length === 0 ? (
+                  <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
+                ) : (
+                  currentChat.messages.map((msg, i) => {
+                    const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/;
+                    const match = msg.content.match(imageRegex);
+                    const cleanText = msg.content.replace(imageRegex, '').trim();
 
-                  return (
-                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed space-y-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
-                        
-                        {/* 如果歷史紀錄包含主動加密的圖片，在這裡反向解碼秀出縮圖 */}
-                        {match && (
-                          <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
-                            <img src={match[1]} alt="對話夾帶圖片" className="max-h-48 w-auto object-contain rounded" />
-                          </div>
-                        )}
-
-                        {msg.role === 'user' ? (
-                          cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>
-                        ) : (
-                          cleanText && (
-                            <div className="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-2
-                              prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
-                              prose-p:leading-relaxed
-                              prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
-                              prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
-                              prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
-                              prose-strong:text-white font-normal">
-                              <ReactMarkdown>{cleanText}</ReactMarkdown>
+                    return (
+                      <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                        <div className={`max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed space-y-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
+                          
+                          {/* 歷史紀錄解包圖片縮圖 */}
+                          {match && (
+                            <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
+                              <img src={match[1]} alt="對話夾帶圖片" className="max-h-48 w-auto object-contain rounded" />
                             </div>
-                          )
-                        )}
+                          )}
+
+                          {msg.role === 'user' ? (
+                            cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>
+                          ) : (
+                            cleanText && (
+                              <div className="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-2
+                                prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+                                prose-p:leading-relaxed
+                                prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
+                                prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
+                                prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
+                                prose-strong:text-white font-normal">
+                                <ReactMarkdown>{cleanText}</ReactMarkdown>
+                              </div>
+                            )
+                          )}
+                        </div>
                       </div>
-                    </div>
+                    );
+                  })
+                )}
+                {isSending && (
+                  <div className="flex justify-start">
+                    <div className="bg-slate-900 text-slate-400 border border-slate-800 rounded-xl rounded-bl-none px-3.5 py-2 text-sm animate-pulse">Gemini 思考中...</div>
+                  </div>
+                )}
+                <div ref={messagesEndRef} />
+              </div>
+
+              {/* ⏱️ 全新右側雙色跳躍時間軸導覽列 */}
+              <aside className="w-14 bg-slate-900/30 border-l border-slate-900/60 flex flex-col items-center py-4 overflow-y-auto space-y-2.5 flex-shrink-0 scrollbar-none">
+                <p className="text-[9px] font-bold text-slate-500 uppercase tracking-wider mb-1">⏱️ 軸</p>
+                {currentChat.messages.map((msg, i) => {
+                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || (msg.role === 'user' ? '圖片' : '智慧回應');
+                  return (
+                    <button
+                      key={i}
+                      onClick={() => {
+                        const element = document.getElementById(`message-node-${i}`);
+                        element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                      }}
+                      title={`[${msg.role === 'user' ? '您' : 'AI'}] ${previewText}...`}
+                      className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold transition-all border
+                        ${msg.role === 'user' 
+                          ? 'bg-indigo-600/15 text-indigo-400 border-indigo-500/20 hover:bg-indigo-600 hover:text-white' 
+                          : 'bg-emerald-600/15 text-emerald-400 border-emerald-500/20 hover:bg-emerald-600 hover:text-white'
+                        }`}
+                    >
+                      {i + 1}
+                    </button>
                   );
-                })
-              )}
-              {isSending && (
-                <div className="flex justify-start">
-                  <div className="bg-slate-900 text-slate-400 border border-slate-800 rounded-xl rounded-bl-none px-3.5 py-2 text-sm animate-pulse">Gemini 思考中...</div>
-                </div>
-              )}
-              <div ref={messagesEndRef} />
+                })}
+              </aside>
+
             </div>
 
             {/* 訊息輸入欄 */}
             <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-900 bg-slate-950">
               <div className="max-w-3xl mx-auto space-y-2">
                 
-                {/* 🖼️ 圖片預覽小卡片 */}
+                {/* 圖片預覽小卡片 */}
                 {attachedImage && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
                     <img src={attachedImage} alt="預覽" className="w-10 h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[11px] text-slate-400">圖片已主動轉為 Base64 (限 4MB 以下)</span>
+                    <span className="text-[11px] text-slate-400">圖片已壓縮為 Base64 (限 1MB 內)</span>
                     <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
 
                 <div className="flex gap-2 items-center">
                   {/* 📎 隱藏式圖片檔案選取鈕 */}
-                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶圖片 (主動轉 Base64)">
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶圖片 (限 1MB，主動轉 Base64)">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                       <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
                     </svg>
