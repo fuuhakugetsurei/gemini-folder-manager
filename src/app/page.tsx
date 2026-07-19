@@ -37,6 +37,11 @@ export default function Home() {
 
   // 📱 行動端側邊欄收闔控制狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+
+  // 📥 匯入控制艙（Modal）狀態
+  const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [importText, setImportText] = useState('');
+  const [isImporting, setIsImporting] = useState(false);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -102,9 +107,9 @@ export default function Home() {
         .eq('assigned_to_user_id', userId);
 
       if (data && data.length > 0) {
-        setIsVerified(true); // 已通過，放行
+        setIsVerified(true);
       } else {
-        setIsVerified(false); // 未通過，攔截
+        setIsVerified(false);
       }
     } catch (err) {
       setIsVerified(false);
@@ -241,7 +246,73 @@ export default function Home() {
     }
   };
 
-  // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
+  // 📥 核心：硬核 Markdown 對話歷史掃描與匯入邏輯
+  const handleImportMarkdown = async () => {
+    if (!importText.trim() || !user || isImporting) return;
+    if (!selectedFolderId) return alert('請先在左側選擇一個要匯入的目的地資料夾！');
+
+    setIsImporting(true);
+    try {
+      const text = importText.trim();
+      
+      // 🔬 使用正則表達式，精準切割出所有的提問與回應區塊 
+      const sectionRegex = /(# you asked|# gemini response)([\s\S]*?)(?=(?:# you asked|# gemini response|Powered by \[AI Exporter\]|$))/g;
+      
+      const parsedMessages: { role: string; content: string }[] = [];
+      let firstQuestionTitle = '';
+      let match;
+
+      while ((match = sectionRegex.exec(text)) !== null) {
+        const marker = match[1]; // '# you asked' 或 '# gemini response' 
+        let content = match[2].trim();
+
+        if (marker === '# you asked') {
+          // 清除 message time 的描述文字，只留下純對話文本 
+          content = content.replace(/message time: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/g, '').trim();
+          if (content) {
+            parsedMessages.push({ role: 'user', content: content });
+            if (!firstQuestionTitle) firstQuestionTitle = content.slice(0, 15);
+          }
+        } else if (marker === '# gemini response') {
+          if (content) {
+            parsedMessages.push({ role: 'model', content: content });
+          }
+        }
+      }
+
+      if (parsedMessages.length === 0) {
+        alert('無法解析該文本！請確保您複製的是標準 AI Exporter 的 Markdown 內容。');
+        setIsImporting(false);
+        return;
+      }
+
+      // 📥 落盤至 Supabase 雲端 
+      const { data, error } = await supabase
+        .from('conversations')
+        .insert([{
+          user_id: user.id,
+          folder_id: selectedFolderId,
+          title: firstQuestionTitle || '匯入的對話歷史',
+        }])
+        .select();
+
+      if (error) throw error;
+
+      if (data) {
+        setConversations([data[0], ...conversations]);
+        setCurrentChat(data[0]);
+        alert(`成功匯入！已在當前資料夾下建立新對話（共 ${parsedMessages.length} 輪訊息）。`);
+        setImportText('');
+        setIsImportModalOpen(false); // 關閉艙門
+      }
+    } catch (err: any) {
+      alert(`匯入失敗: ${err.message}`);
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
+  // 4. 核心：呼叫 Gemini API 並且雲端同步存檔 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!inputMessage.trim() && !attachedImage) || !currentChat || !apiKey || isSending) return;
@@ -294,7 +365,6 @@ export default function Home() {
         return { role: 'user', parts: parts };
       });
 
-      // 🛑 繁體中文與標準 LaTeX 公式注入防禦提示詞[cite: 1]
       const response = await ai.models.generateContent({
         model: selectedModel,
         contents: contents,
@@ -345,7 +415,7 @@ export default function Home() {
 
   if (isVerified === false) {
     return (
-      <main className="flex h-screen flex-col items-center justify-center bg-slate-95 yard text-white p-4">
+      <main className="flex h-screen flex-col items-center justify-center bg-slate-950 text-white p-4">
         <div className="w-full max-w-md rounded-2xl bg-slate-900 p-8 shadow-xl border border-slate-800">
           <div className="flex items-center gap-2 mb-3">
             <span className="text-2xl">🔐</span>
@@ -389,13 +459,57 @@ export default function Home() {
       
       {/* 行動端側邊欄黑底遮罩 */}
       {isSidebarOpen && (
-        <div 
-          onClick={() => setIsSidebarOpen(false)} 
-          className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity"
-        />
+        <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity" />
       )}
 
-      {/* 🧭 側邊欄 Sidebar */}
+      {/* 📥 懸浮暗黑科技感匯入控制艙 (Modal Panel)  */}
+      {isImportModalOpen && (
+        <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in">
+          <div className="w-full max-w-2xl bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">📥</span>
+                <h3 className="font-bold text-sm md:text-base text-slate-200">歷史對話重組控制艙</h3>
+              </div>
+              <button onClick={() => setIsImportModalOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
+                關閉艙門 ✕
+              </button>
+            </div>
+
+            <div className="text-xs text-slate-400 space-y-1 bg-slate-950/40 p-3 rounded-lg border border-slate-800/60 leading-normal">
+              <p>💡 **操作備忘錄：**</p>
+              <p>1. 請在外界將 AI Exporter 導出的 Markdown 對話文本一字不漏地複製。 </p>
+              <p>2. 直接在下方區塊貼上。系統會全自動過濾廣告，並在目前選中的資料夾下建立可延續的新生命對話！ </p>
+            </div>
+
+            <textarea
+              value={importText}
+              onChange={(e) => setImportText(e.target.value)}
+              placeholder="請在此處貼上完整的 Markdown 對話文本結構..."
+              className="w-full h-64 bg-slate-950 border border-slate-800 rounded-xl p-3 text-xs text-slate-300 font-mono focus:outline-none focus:border-indigo-500 resize-none scrollbar-none"
+            />
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setIsImportModalOpen(false)}
+                className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-4 py-2 rounded-lg transition-colors"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={handleImportMarkdown}
+                disabled={isImporting || !importText.trim() || !selectedFolderId}
+                className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 text-white text-xs font-semibold px-5 py-2 rounded-lg transition-colors"
+              >
+                {isImporting ? '解構重組中...' : '確認匯入資料庫'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 🧭 側邊欄 Sidebar*/}
       <aside className={`w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between flex-shrink-0
         fixed md:relative top-0 bottom-0 left-0 z-50 transition-transform duration-300 ease-in-out
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
@@ -408,7 +522,7 @@ export default function Home() {
             </button>
           </div>
           
-          {/* 模型切換區 */}
+          {/* 模型切換區  */}
           <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60 space-y-1.5">
             <div>
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心</label>
@@ -417,42 +531,51 @@ export default function Home() {
                 onChange={(e) => saveSelectedModel(e.target.value)}
                 className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
-                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·速度快)</option>
-                <option value="gemini-3.1-pro">Gemini 3.1 Pro (深度·寫程式)</option>
-                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (預覽版)</option>
+                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·速度快)</option> 
+                <option value="gemini-3.1-pro">Gemini 3.1 Pro (深度·寫程式)</option> 
+                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (預覽版)</option> 
               </select>
             </div>
             <div className="text-[10px] text-slate-500 leading-tight px-1">
-              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：Flash 模型限每分鐘 15 次，日常聊天首選。"}
-              {selectedModel === 'gemini-3.1-pro' && "⚠️ 提示：Pro 模型每分鐘限 5 次，深度推理專用。"}
-              {selectedModel === 'gemini-3.1-pro-preview' && "🧪 提示：預覽版功能最新，高負載時可能稍有延遲。"}
+              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：Flash 模型限每分鐘 15 次，日常聊天首選。"} 
+              {selectedModel === 'gemini-3.1-pro' && "⚠️ 提示：Pro 模型每分鐘限 5 次，深度推理專用。"} 
+              {selectedModel === 'gemini-3.1-pro-preview' && "🧪 提示：預覽版功能最新，高負載時可能稍有延遲。"} 
             </div>
           </div>
 
-          {/* API Key 設定區 */}
+          {/* 📥 獨立匯入按鈕：維持主介面乾淨的最佳防禦組件  */}
+          <button 
+            onClick={() => { setIsImportModalOpen(true); setIsSidebarOpen(false); }}
+            className="w-full mb-4 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 rounded-lg py-2 px-3 text-xs text-indigo-300 font-medium flex items-center justify-center gap-2 transition-all group"
+          >
+            <span>📥</span>
+            <span>匯入歷史對話文檔</span> 
+          </button>
+
+          {/* API Key 設定區  */}
           <div className="mb-4 bg-slate-800/50 p-2 rounded border border-slate-700/60">
-            <label className="text-[11px] font-semibold text-slate-400 uppercase">Gemini API Key</label>
-            <input type="password" placeholder="貼上 AI Studio 金鑰..." value={apiKey} onChange={(e) => saveApiKey(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500" />
+            <label className="text-[11px] font-semibold text-slate-400 uppercase">Gemini API Key</label> 
+            <input type="password" placeholder="貼上 AI Studio 金鑰..." value={apiKey} onChange={(e) => saveApiKey(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-indigo-500" /> 
           </div>
 
-          {/* 新增資料夾 */}
+          {/* 新增資料夾  */}
           <form onSubmit={handleCreateFolder} className="mb-4 flex gap-1">
-            <input type="text" placeholder="新建資料夾..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none" />
-            <button type="submit" disabled={!newFolderName.trim()} className="bg-indigo-600 px-2 py-1 rounded text-xs">+</button>
+            <input type="text" placeholder="新建資料夾..." value={newFolderName} onChange={(e) => setNewFolderName(e.target.value)} className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none" /> 
+            <button type="submit" disabled={!newFolderName.trim()} className="bg-indigo-600 px-2 py-1 rounded text-xs">+</button> 
           </form>
 
-          {/* 資料夾清單 */}
+          {/* 資料夾清單  */}
           <div className="space-y-4">
             <div>
-              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p>
+              <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p> 
               <div className="space-y-1">
                 {folders.map(f => (
                   <div key={f.id} className="group flex items-center justify-between rounded text-xs font-medium transition-colors border border-transparent">
-                    <button onClick={() => { setSelectedFolderId(f.id); setCurrentChat(null); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${selectedFolderId === f.id ? 'bg-indigo-600/30 text-indigo-300 border-l border-y border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800'}`}>
-                      <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
-                      <span className="truncate max-w-[130px]">{f.name}</span>
+                    <button onClick={() => { setSelectedFolderId(f.id); setCurrentChat(null); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${selectedFolderId === f.id ? 'bg-indigo-600/30 text-indigo-300 border-l border-y border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800'}`}> 
+                      <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg> 
+                      <span className="truncate max-w-[130px]">{f.name}</span> 
                     </button>
-                    <button onClick={(e) => handleDeleteFolder(f.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all">
+                    <button onClick={(e) => handleDeleteFolder(f.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all"> 
                       🗑️
                     </button>
                   </div>
@@ -463,19 +586,19 @@ export default function Home() {
             {selectedFolderId && (
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">對話歷史</p>
-                  <button onClick={handleCreateChat} className="text-[10px] text-indigo-400 hover:underline">+ 新對話</button>
+                  <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider">對話歷史</p> 
+                  <button onClick={handleCreateChat} className="text-[10px] text-indigo-400 hover:underline">+ 新對話</button> 
                 </div>
                 <div className="space-y-1">
                   {conversations.filter(c => c.folder_id === selectedFolderId).map(c => (
                     <div key={c.id} className="group flex items-center justify-between rounded text-xs transition-colors border border-transparent">
-                      <button onClick={() => { setCurrentChat(c); setIsSidebarOpen(false); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
-                        <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                      <button onClick={() => { setCurrentChat(c); setIsSidebarOpen(false); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}> 
+                        <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg> 
                         <span className="truncate flex-1 max-w-[130px]">
-                          {c.title.includes('[IMAGE_DATA:') ? c.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : c.title}
+                          {c.title.includes('[IMAGE_DATA:') ? c.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : c.title} 
                         </span>
                       </button>
-                      <button onClick={(e) => handleDeleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all">
+                      <button onClick={(e) => handleDeleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all"> 
                         🗑️
                       </button>
                     </div>
@@ -488,60 +611,55 @@ export default function Home() {
 
         <div className="p-3 bg-slate-900/80 border-t border-slate-800 flex items-center justify-between">
           <span className="text-[11px] text-emerald-400 truncate max-w-[120px]">{user.email}</span>
-          <button onClick={() => supabase.auth.signOut()} className="text-[10px] text-rose-400 hover:bg-rose-950/30 px-1.5 py-0.5 rounded border border-rose-950">登出</button>
+          <button onClick={() => supabase.auth.signOut()} className="text-[10px] text-rose-400 hover:bg-rose-950/30 px-1.5 py-0.5 rounded border border-rose-950">登出</button> 
         </div>
       </aside>
 
-      {/* 右側 主對話區域 */}
+      {/* 右側 主對話區域  */}
       <main className="flex-1 flex flex-col bg-slate-950 h-full overflow-hidden">
         {currentChat ? (
           <>
-            {/* 對話頂欄 */}
+            {/* 對話頂欄  */}
             <header className="p-3 md:p-4 border-b border-slate-900 bg-slate-900/30 flex items-center justify-between gap-2 flex-shrink-0">
               <div className="flex items-center gap-3 truncate">
-                <button 
-                  onClick={() => setIsSidebarOpen(true)} 
-                  className="md:hidden text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 flex-shrink-0"
-                >
-                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                <button onClick={() => setIsSidebarOpen(true)} className="md:hidden text-slate-400 hover:text-white p-1 rounded hover:bg-slate-800 flex-shrink-0">
+                  <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}> 
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /> 
                   </svg>
                 </button>
                 <h3 className="font-semibold text-xs md:text-sm text-slate-200 truncate">
-                  {currentChat.title.includes('[IMAGE_DATA:') ? currentChat.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : currentChat.title}
+                  {currentChat.title.includes('[IMAGE_DATA:') ? currentChat.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : currentChat.title} 
                 </h3>
               </div>
-              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">雲端同步</span>
+              <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 flex-shrink-0">雲端同步</span> 
             </header>
 
-            {/* 複合彈性格局 */}
+            {/* 複合彈性格局  */}
             <div className="flex-1 flex flex-row overflow-hidden h-full relative">
               
-              {/* 💬 核心對話框 */}
+              {/* 💬 核心對話框  */}
               <div className="flex-1 overflow-y-auto p-3 md:p-6 space-y-6 scrollbar-none pr-8">
                 {currentChat.messages.length === 0 ? (
-                  <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
+                  <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div> 
                 ) : (
                   currentChat.messages.map((msg, i) => {
-                    const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/;
-                    const match = msg.content.match(imageRegex);
-                    const cleanText = msg.content.replace(imageRegex, '').trim();
+                    const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/; 
+                    const match = msg.content.match(imageRegex); 
+                    const cleanText = msg.content.replace(imageRegex, '').trim(); 
 
                     return (
-                      <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}> 
                         {msg.role === 'user' ? (
-                          /* 👤 使用者維持精緻氣泡對話框形式 */
-                          <div className="max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm bg-indigo-600 text-white rounded-br-none shadow-md">
+                          <div className="max-w-[85%] md:max-w-[75%] rounded-xl px-3.5 py-2 text-sm bg-indigo-600 text-white rounded-br-none shadow-md"> 
                             {match && (
-                              <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
-                                <img src={match[1]} alt="對話夾帶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
+                              <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1"> 
+                                <img src={match[1]} alt="對話夾帶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" /> 
                               </div>
                             )}
-                            {cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>}
+                            {cleanText && <p className="whitespace-pre-wrap text-xs md:text-sm">{cleanText}</p>} 
                           </div>
                         ) : (
-                          /* 🤖 AI 移除對話框，直接沉浸式鋪平顯示，並同步放大字體 */
-                          <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
+                          <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3"> 
                             {cleanText && (
                               <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3
                                 prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-lg prose-h2:text-base prose-h3:text-sm
@@ -549,8 +667,7 @@ export default function Home() {
                                 prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs md:prose-code:text-sm
                                 prose-pre:bg-slate-900 prose-pre:p-4 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
                                 prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5
-                                prose-strong:text-white font-semibold">
-                                {/* 🧮 載入外掛：完美渲染 LaTeX 行內及區塊數學算式 */}
+                                prose-strong:text-white font-semibold"> 
                                 <ReactMarkdown 
                                   remarkPlugins={[remarkMath]} 
                                   rehypePlugins={[rehypeKatex]}
@@ -575,22 +692,21 @@ export default function Home() {
                 <div ref={messagesEndRef} />
               </div>
 
-              {/* ⏱️ 完美優化時間軸：只紀錄使用者的問題（msg.role === 'user'） */}
+              {/* ⏱️ 縱向滾動時間軸：只紀錄使用者的問題  */}
               <aside className="hidden sm:flex absolute right-2 top-4 bottom-4 w-4 bg-slate-800/20 backdrop-blur-sm rounded-full flex-col items-center py-4 overflow-y-auto space-y-4 border border-slate-800/40 scrollbar-none z-30">
                 {currentChat.messages.map((msg, i) => {
-                  // 防禦性過濾：如果不是使用者發送的，直接略過不產生小圓點，避免重複與擁擠
-                  if (msg.role !== 'user') return null;
+                  if (msg.role !== 'user') return null; 
 
-                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題';
+                  const previewText = msg.content.replace(/\[IMAGE_DATA:.*\]/g, '').slice(0, 15) || '圖片或複雜算式問題'; 
                   return (
                     <button
                       key={i}
                       onClick={() => {
-                        const element = document.getElementById(`message-node-${i}`);
-                        element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        const element = document.getElementById(`message-node-${i}`); 
+                        element?.scrollIntoView({ behavior: 'smooth', block: 'center' }); 
                       }}
-                      title={`[問題紀錄] ${previewText}...`}
-                      className="w-2.5 h-2.5 rounded-full transition-all duration-200 flex-shrink-0 cursor-pointer hover:scale-150 bg-slate-500 hover:bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.5)]"
+                      title={`[問題紀錄] ${previewText}...`} 
+                      className="w-2.5 h-2.5 rounded-full transition-all duration-200 flex-shrink-0 cursor-pointer hover:scale-150 bg-slate-500 hover:bg-indigo-400 shadow-[0_0_8px_rgba(129,140,248,0.5)]" 
                     />
                   );
                 })}
@@ -598,46 +714,43 @@ export default function Home() {
 
             </div>
 
-            {/* 訊息輸入欄 */}
+            {/* 訊息輸入欄  */}
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
                 {attachedImage && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
-                    <img src={attachedImage} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-slate-400">圖片已壓縮 (限 1MB 內)</span>
-                    <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
+                    <img src={attachedImage} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" /> 
+                    <span className="text-[10px] md:text-[11px] text-slate-400">圖片已壓縮 (限 1MB 內)</span> 
+                    <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button> 
                   </div>
                 )}
 
                 <div className="flex gap-2 items-center">
                   <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0">
-                    <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}> 
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /> 
                     </svg>
-                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending} />
+                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending} /> 
                   </label>
 
-                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImage) || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                  <input type="text" placeholder={apiKey ? "輸入訊息或發送數學物理公式..." : "請先填入 Gemini API Key！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" /> 
+                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImage) || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button> 
                 </div>
               </div>
             </form>
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center relative">
-            <button 
-              onClick={() => setIsSidebarOpen(true)} 
-              className="md:hidden absolute top-3 left-3 text-slate-400 hover:text-white p-2 rounded bg-slate-900 border border-slate-800"
-            >
-              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+            <button onClick={() => setIsSidebarOpen(true)} className="md:hidden absolute top-3 left-3 text-slate-400 hover:text-white p-2 rounded bg-slate-900 border border-slate-800">
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}> 
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" /> 
               </svg>
             </button>
             <div className="w-12 h-12 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-center mb-3">
-              <svg className="w-6 h-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+              <svg className="w-6 h-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg> 
             </div>
-            <h3 className="text-xs md:text-sm font-medium text-slate-400">請從左側點選資料夾並「+ 新對話」</h3>
-            <p className="text-[11px] text-slate-600 mt-1 max-w-xs">手機用戶請點選左上角選單展開工作區。</p>
+            <h3 className="text-xs md:text-sm font-medium text-slate-400">請從左側點選資料夾並「+ 新對話」</h3> 
+            <p className="text-[11px] text-slate-600 mt-1 max-w-xs">手機用戶請點選左上角選單展開工作區。</p> 
           </div>
         )}
       </main>
