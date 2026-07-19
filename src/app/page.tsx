@@ -24,8 +24,8 @@ export default function Home() {
   const [apiKey, setApiKey] = useState('');
   const [isSending, setIsSending] = useState(false);
   
-  // 🤖 Gemini 三系列模型切換狀態
-  const [selectedModel, setSelectedModel] = useState('gemini-3.5-flash');
+  // 🤖 Gemini 模型切換狀態
+  const [selectedModel, setSelectedModel] = useState('gemini-2.0-flash');
 
   // 🔐 邀請密鑰專用防禦狀態
   const [isVerified, setIsVerified] = useState<boolean | null>(null); 
@@ -76,7 +76,7 @@ export default function Home() {
     if (savedKey) setApiKey(savedKey);
 
     const savedModel = localStorage.getItem('gemini_selected_model');
-    if (savedModel) setSelectedModel(savedModel);
+    if (savedModel) setSelectedModel(normalizeModelSelection(savedModel));
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
@@ -97,14 +97,26 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [currentChat?.messages]);
 
+  const normalizeModelSelection = (model: string) => {
+    switch (model) {
+      case 'gemini-2.0-flash':
+      case 'gemini-2.0-flash-lite':
+      case 'gemini-2.5-pro':
+        return model;
+      default:
+        return 'gemini-2.0-flash';
+    }
+  };
+
   const saveApiKey = (key: string) => {
     setApiKey(key);
     localStorage.setItem('gemini_api_key', key);
   };
 
   const saveSelectedModel = (model: string) => {
-    setSelectedModel(model);
-    localStorage.setItem('gemini_selected_model', model);
+    const normalizedModel = normalizeModelSelection(model);
+    setSelectedModel(normalizedModel);
+    localStorage.setItem('gemini_selected_model', normalizedModel);
   };
 
   const checkUserVerification = async (userId: string) => {
@@ -220,7 +232,9 @@ export default function Home() {
     e.preventDefault();
     if (!newFolderName.trim() || !user) return;
     const { data } = await supabase.from('folders').insert([{ name: newFolderName.trim(), user_id: user.id }]).select();
-    if (data) setFolders([...folders, data[0]]);
+    if (data) {
+      setFolders(prev => [...prev, data[0]]);
+    }
     setNewFolderName('');
   };
 
@@ -238,7 +252,7 @@ export default function Home() {
       .select();
 
     if (data) {
-      setConversations([data[0], ...conversations]);
+      setConversations(prev => [data[0], ...prev]);
       setCurrentChat(data[0]);
       setIsSidebarOpen(false); 
     }
@@ -250,12 +264,12 @@ export default function Home() {
 
     const { error } = await supabase.from('folders').delete().eq('id', folderId);
     if (!error) {
-      setFolders(folders.filter(f => f.id !== folderId));
+      setFolders(prev => prev.filter(f => f.id !== folderId));
       if (selectedFolderId === folderId) {
         setSelectedFolderId(null);
         setCurrentChat(null);
       }
-      setConversations(conversations.filter(c => c.folder_id !== folderId));
+      setConversations(prev => prev.filter(c => c.folder_id !== folderId));
     } else {
       alert(`刪除資料夾失敗: ${error.message}`);
     }
@@ -267,7 +281,7 @@ export default function Home() {
 
     const { error = null } = await supabase.from('conversations').delete().eq('id', chatId);
     if (!error) {
-      setConversations(conversations.filter(c => c.id !== chatId));
+      setConversations(prev => prev.filter(c => c.id !== chatId));
       if (currentChat?.id === chatId) {
         setCurrentChat(null);
       }
@@ -340,7 +354,7 @@ export default function Home() {
       if (error) throw error;
 
       if (data) {
-        setConversations([data[0], ...conversations]);
+        setConversations(prev => [data[0], ...prev]);
         setCurrentChat(data[0]);
         alert(`成功導入！已建立新生命對話（共解析 ${parsedMessages.length} 則歷史訊息）。`);
         
@@ -372,13 +386,18 @@ export default function Home() {
 
     const userMessage = { role: 'user', content: finalContent };
     const updatedMessages = [...currentChat.messages, userMessage];
-    
-    // 🛠️ 關鍵同步修正 1：即時更新當前與歷史列表，防止渲染中斷
-    const nextChatState = { ...currentChat, messages: updatedMessages };
-    setCurrentChat(nextChatState);
-    setConversations(conversations.map(c => c.id === currentChat.id ? nextChatState : c)); 
-
+    const chatId = currentChat.id;
     const originalInput = inputMessage.trim();
+
+    const nextChatState = {
+      ...currentChat,
+      messages: updatedMessages,
+      title: currentChat.title === '新對話' ? (originalInput || attachedFileName || '檔案對話') : currentChat.title,
+      updated_at: new Date().toISOString()
+    };
+
+    setCurrentChat(nextChatState);
+    setConversations(prev => prev.map(c => c.id === chatId ? nextChatState : c));
     setInputMessage('');
     setAttachedImageUrl(null); 
     setAttachedFileContent(null); 
@@ -439,27 +458,24 @@ export default function Home() {
       const modelResponseText = response.text || '（未能取得回應）';
       const finalMessages = [...updatedMessages, { role: 'model', content: modelResponseText }];
 
-      // 🛠️ 關鍵同步修正 2：API 回應成功時，連同左側歷史清單一併將全域狀態強制同步寫入 
-      const updatedChatFromAi = {
-        ...currentChat,
-        messages: finalMessages,
-        title: currentChat.title === '新對話' ? (originalInput || attachedFileName || '檔案對話') : currentChat.title,
-        updated_at: new Date().toISOString()
-      };
+      // ✨【修復點 1】擷取 nextChatState 的最新標題，改掉原先初始化前引用的 ReferenceError 臭蟲
+      const currentChatTitle = nextChatState.title;
+      const currentChatIsoString = new Date().toISOString();
 
       const { data } = await supabase
         .from('conversations')
         .update({ 
           messages: finalMessages,
-          title: updatedChatFromAi.title,
-          updated_at: updatedChatFromAi.updated_at
+          title: currentChatTitle,
+          updated_at: currentChatIsoString
         })
-        .eq('id', currentChat.id)
+        .eq('id', chatId)
         .select();
 
       if (data) {
-        setCurrentChat(data[0]); 
-        setConversations(conversations.map(c => c.id === currentChat.id ? data[0] : c)); 
+        const syncedChat = data[0];
+        setCurrentChat(syncedChat);
+        setConversations(prev => prev.map(c => c.id === chatId ? syncedChat : c));
       }
     } catch (err: any) {
       alert(`Gemini API 錯誤: ${err.message}`);
@@ -723,15 +739,15 @@ export default function Home() {
                 onChange={(e) => saveSelectedModel(e.target.value)}
                 className="w-full mt-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
-                <option value="gemini-3.5-flash">Gemini 3.5 Flash (全能·速度快)</option>
-                <option value="gemini-3.1-pro">Gemini 3.1 Pro (深度·寫程式)</option>
-                <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview (預覽版)</option>
+                <option value="gemini-2.0-flash">Gemini 2.0 Flash (全能·速度快)</option>
+                <option value="gemini-2.0-flash-lite">Gemini 2.0 Flash Lite (輕量·低延遲)</option>
+                <option value="gemini-2.5-pro">Gemini 2.5 Pro (深度·寫程式)</option>
               </select>
             </div>
             <div className="text-[10px] text-slate-500 leading-tight px-1">
-              {selectedModel === 'gemini-3.5-flash' && "⚡ 提示：Flash 模型限每分鐘 15 次，日常聊天首選。"}
-              {selectedModel === 'gemini-3.1-pro' && "⚠️ 提示：Pro 模型每分鐘限 5 次，深度推理專用。"}
-              {selectedModel === 'gemini-3.1-pro-preview' && "🧪 提示：預覽版功能最新，高負載時可能稍有延遲。"}
+              {selectedModel === 'gemini-2.0-flash' && "⚡ 提示：Flash 模型適合日常聊天與快速整理。"}
+              {selectedModel === 'gemini-2.0-flash-lite' && "⚡ 提示：Lite 模型低延遲，適合簡短互動與大量請求。"}
+              {selectedModel === 'gemini-2.5-pro' && "🧠 提示：Pro 模型更適合深度推理與複雜程式生成。"}
             </div>
           </div>
 
@@ -784,7 +800,6 @@ export default function Home() {
                 <div className="space-y-1">
                   {conversations.filter(c => c.folder_id === selectedFolderId).map(c => (
                     <div key={c.id} className="group flex items-center justify-between rounded text-xs transition-colors border border-transparent">
-                      {/* 🛠️ 關鍵同步修正 3：切換對話時，直接從大陣列撈最新值，徹底阻斷 React 狀態渲染延遲  */}
                       <button onClick={() => { setCurrentChat(c); setIsSidebarOpen(false); }} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
                         <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
                         <span className="truncate flex-1 max-w-[130px]">
@@ -849,7 +864,12 @@ export default function Home() {
                                 <img src={match[1]} alt="雲端儲存桶圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
                               </div>
                             )}
-                            {cleanText && <div className="whitespace-pre-wrap text-xs md:text-sm prose prose-invert max-w-none prose-code:text-amber-300 prose-pre:bg-slate-950"><ReactMarkdown>{cleanText}</ReactMarkdown></div>}
+                            {/* ✨【修復點 2】使用者的問題（可能夾帶充滿符號的原始碼）只走標準 Markdown，不掛載 LaTeX 渲染器，徹底避免前端元件渲染崩潰 */}
+                            {cleanText && (
+                              <div className="whitespace-pre-wrap text-xs md:text-sm prose prose-invert max-w-none prose-code:text-amber-300 prose-pre:bg-slate-950">
+                                <ReactMarkdown>{cleanText}</ReactMarkdown>
+                              </div>
+                            )}
                           </div>
                         ) : (
                           <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
@@ -861,6 +881,7 @@ export default function Home() {
                                 prose-pre:bg-slate-900 prose-pre:p-4 prose-pre:rounded-xl prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
                                 prose-ul:list-disc prose-ul:pl-5 prose-ol:list-decimal prose-ol:pl-5
                                 prose-strong:text-white font-semibold">
+                                {/* ✨【修復點 3】只有 AI 回應的學術或算式內容才需要過 Latex 引擎解析 */}
                                 <ReactMarkdown 
                                   remarkPlugins={[remarkMath]} 
                                   rehypePlugins={[rehypeKatex]}
