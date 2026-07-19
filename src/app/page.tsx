@@ -29,6 +29,9 @@ export default function Home() {
   const [isVerified, setIsVerified] = useState<boolean | null>(null); 
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [verifying, setVerifying] = useState(false);
+
+  // 🖼️ 圖片主動轉 Base64 暫存狀態
+  const [attachedImage, setAttachedImage] = useState<string | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -144,6 +147,23 @@ export default function Home() {
     }
   };
 
+  // 🖼️ 處理圖片主動轉成 Base64
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 4 * 1024 * 1024) {
+      alert('這張圖片太大了！請選擇 4MB 以下的圖片，免得撐爆資料庫文字欄位。');
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setAttachedImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
   // 2. 資料庫撈取邏輯
   const fetchFolders = async () => {
     const { data } = await supabase.from('folders').select('*').order('created_at', { ascending: true });
@@ -195,7 +215,6 @@ export default function Home() {
         setSelectedFolderId(null);
         setCurrentChat(null);
       }
-      // 同步過濾本地的對話歷史狀態
       setConversations(conversations.filter(c => c.folder_id !== folderId));
     } else {
       alert(`刪除資料夾失敗: ${error.message}`);
@@ -221,25 +240,58 @@ export default function Home() {
   // 4. 核心：呼叫 Gemini API 並且雲端同步存檔
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() || !currentChat || !apiKey || isSending) return;
+    if ((!inputMessage.trim() && !attachedImage) || !currentChat || !apiKey || isSending) return;
 
-    const userMessage = { role: 'user', content: inputMessage.trim() };
+    // 1. 如果有附帶圖片，我們把 Base64 用隱藏標記跟文字黏在一起，這樣 Supabase 就能整串文字存下來
+    let finalContent = inputMessage.trim();
+    if (attachedImage) {
+      finalContent = `${inputMessage.trim()}\n\n[IMAGE_DATA:${attachedImage}]`;
+    }
+
+    const userMessage = { role: 'user', content: finalContent };
     const updatedMessages = [...currentChat.messages, userMessage];
     
     // 先在前端即時更新顯示使用者的話
     setCurrentChat({ ...currentChat, messages: updatedMessages });
+    const originalInput = inputMessage.trim();
     setInputMessage('');
+    setAttachedImage(null); // 立即清空選取的圖片暫存
     setIsSending(true);
 
     try {
-      // 初始化 Google Gen AI SDK
       const ai = new GoogleGenAI({ apiKey: apiKey });
       
-      // 轉換成 Gemini 要求的對話格式
-      const contents = updatedMessages.map(msg => ({
-        role: msg.role === 'model' ? 'model' : 'user',
-        parts: [{ text: msg.content }]
-      }));
+      // 2. 解析歷史紀錄，並把隱藏的 [IMAGE_DATA:...] 還原成 Gemini SDK 的多模態 Parts 物件
+      const contents = updatedMessages.map(msg => {
+        if (msg.role === 'model') {
+          return { role: 'model', parts: [{ text: msg.content }] };
+        }
+
+        const text = msg.content;
+        const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,([A-Za-z0-9+/=]+))\]/;
+        const match = text.match(imageRegex);
+
+        const parts: any[] = [];
+        
+        if (match) {
+          const cleanText = text.replace(imageRegex, '').trim();
+          if (cleanText) parts.push({ text: cleanText });
+          
+          const rawBase64 = match[2];
+          const mimeType = match[1].match(/[^:]\w+\/[\w-+\.]+(?=;|,)/)?.[0] || "image/jpeg";
+          
+          parts.push({
+            inlineData: {
+              data: rawBase64,
+              mimeType: mimeType
+            }
+          });
+        } else {
+          parts.push({ text: text });
+        }
+
+        return { role: 'user', parts: parts };
+      });
 
       // 動態調用使用者在左側選取的 Gemini 三系列核心模型
       const response = await ai.models.generateContent({
@@ -255,7 +307,7 @@ export default function Home() {
         .from('conversations')
         .update({ 
           messages: finalMessages,
-          title: currentChat.title === '新對話' ? userMessage.content.slice(0, 15) : currentChat.title,
+          title: currentChat.title === '新對話' ? (originalInput || '圖片對話') : currentChat.title,
           updated_at: new Date().toISOString()
         })
         .eq('id', currentChat.id)
@@ -263,7 +315,6 @@ export default function Home() {
 
       if (data) {
         setCurrentChat(data[0]);
-        // 更新左側清單中的對話標題與排序
         setConversations(conversations.map(c => c.id === currentChat.id ? data[0] : c));
       }
     } catch (err: any) {
@@ -384,7 +435,7 @@ export default function Home() {
                       <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
                       <span className="truncate max-w-[130px]">{f.name}</span>
                     </button>
-                    {/* 🗑️ 資料夾刪除按鈕，Hover 時才顯現 */}
+                    {/* 🗑️ 資料夾刪除按鈕 */}
                     <button onClick={(e) => handleDeleteFolder(f.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all" title="刪除資料夾">
                       🗑️
                     </button>
@@ -405,9 +456,11 @@ export default function Home() {
                     <div key={c.id} className="group flex items-center justify-between rounded text-xs transition-colors border border-transparent">
                       <button onClick={() => setCurrentChat(c)} className={`flex flex-1 items-center gap-2 px-2 py-1.5 rounded-l text-left transition-colors ${currentChat?.id === c.id ? 'bg-slate-800 text-white font-medium border-l border-y border-slate-700' : 'text-slate-400 hover:bg-slate-800/60'}`}>
                         <svg className="w-3.5 h-3.5 text-slate-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                        <span className="truncate flex-1 max-w-[130px]">{c.title}</span>
+                        <span className="truncate flex-1 max-w-[130px]">
+                          {c.title.includes('[IMAGE_DATA:') ? c.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : c.title}
+                        </span>
                       </button>
-                      {/* 🗑️ 對話單一刪除按鈕，Hover 時才顯現 */}
+                      {/* 🗑️ 對話單一刪除按鈕 */}
                       <button onClick={(e) => handleDeleteChat(c.id, e)} className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-rose-400 px-2 py-1.5 rounded-r bg-transparent hover:bg-slate-800 transition-all" title="刪除對話">
                         🗑️
                       </button>
@@ -432,36 +485,53 @@ export default function Home() {
           <>
             {/* 對話頂欄 */}
             <header className="p-4 border-b border-slate-900 bg-slate-900/30 flex items-center justify-between">
-              <h3 className="font-semibold text-sm text-slate-200">{currentChat.title}</h3>
+              <h3 className="font-semibold text-sm text-slate-200">
+                {currentChat.title.includes('[IMAGE_DATA:') ? currentChat.title.split('[IMAGE_DATA:')[0].trim() || '圖片對話' : currentChat.title}
+              </h3>
               <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700">雲端同步中</span>
             </header>
 
             {/* 訊息渲染區 */}
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {currentChat.messages.length === 0 ? (
-                <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，輸入訊息開始跟 Gemini 聊天吧。</div>
+                <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片或輸入訊息開始聊吧。</div>
               ) : (
-                currentChat.messages.map((msg, i) => (
-                  <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    <div className={`max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
-                      {msg.role === 'user' ? (
-                        // 使用者的話通常是純文字，維持原狀即可
-                        <p className="whitespace-pre-wrap">{msg.content}</p>
-                      ) : (
-                        // 🤖 Gemini 回傳的訊息，交給 ReactMarkdown 進行高質感渲染
-                        <div className="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-2
-                          prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
-                          prose-p:leading-relaxed
-                          prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
-                          prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
-                          prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
-                          prose-strong:text-white font-normal">
-                          <ReactMarkdown>{msg.content}</ReactMarkdown>
-                        </div>
-                      )}
+                currentChat.messages.map((msg, i) => {
+                  // 渲染前動態解包，把隱藏的圖片標記切出來，好在前端渲染縮圖
+                  const imageRegex = /\[IMAGE_DATA:(data:image\/(?:png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+)\]/;
+                  const match = msg.content.match(imageRegex);
+                  const cleanText = msg.content.replace(imageRegex, '').trim();
+
+                  return (
+                    <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div className={`max-w-[75%] rounded-xl px-3.5 py-2 text-sm leading-relaxed space-y-2 ${msg.role === 'user' ? 'bg-indigo-600 text-white rounded-br-none' : 'bg-slate-900 text-slate-200 rounded-bl-none border border-slate-800'}`}>
+                        
+                        {/* 如果歷史紀錄包含主動加密的圖片，在這裡反向解碼秀出縮圖 */}
+                        {match && (
+                          <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
+                            <img src={match[1]} alt="對話夾帶圖片" className="max-h-48 w-auto object-contain rounded" />
+                          </div>
+                        )}
+
+                        {msg.role === 'user' ? (
+                          cleanText && <p className="whitespace-pre-wrap">{cleanText}</p>
+                        ) : (
+                          cleanText && (
+                            <div className="prose prose-invert max-w-none text-slate-200 text-sm leading-relaxed space-y-2
+                              prose-headings:font-bold prose-headings:text-slate-100 prose-h1:text-base prose-h2:text-sm prose-h3:text-xs
+                              prose-p:leading-relaxed
+                              prose-code:bg-slate-950 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs
+                              prose-pre:bg-slate-950 prose-pre:p-3 prose-pre:rounded-lg prose-pre:border prose-pre:border-slate-800 prose-pre:overflow-x-auto
+                              prose-ul:list-disc prose-ul:pl-4 prose-ol:list-decimal prose-ol:pl-4
+                              prose-strong:text-white font-normal">
+                              <ReactMarkdown>{cleanText}</ReactMarkdown>
+                            </div>
+                          )
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))
+                  );
+                })
               )}
               {isSending && (
                 <div className="flex justify-start">
@@ -473,9 +543,29 @@ export default function Home() {
 
             {/* 訊息輸入欄 */}
             <form onSubmit={handleSendMessage} className="p-4 border-t border-slate-900 bg-slate-950">
-              <div className="flex gap-2 max-w-3xl mx-auto">
-                <input type="text" placeholder={apiKey ? "輸入訊息..." : "請先在左側填入 Gemini API Key 才能開始對話！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                <button type="submit" disabled={!inputMessage.trim() || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-40">發送</button>
+              <div className="max-w-3xl mx-auto space-y-2">
+                
+                {/* 🖼️ 圖片預覽小卡片 */}
+                {attachedImage && (
+                  <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
+                    <img src={attachedImage} alt="預覽" className="w-10 h-10 object-cover rounded border border-slate-700" />
+                    <span className="text-[11px] text-slate-400">圖片已主動轉為 Base64 (限 4MB 以下)</span>
+                    <button type="button" onClick={() => setAttachedImage(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
+                  </div>
+                )}
+
+                <div className="flex gap-2 items-center">
+                  {/* 📎 隱藏式圖片檔案選取鈕 */}
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶圖片 (主動轉 Base64)">
+                    <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" />
+                    </svg>
+                    <input type="file" accept="image/*" onChange={handleImageChange} className="hidden" disabled={!apiKey || isSending} />
+                  </label>
+
+                  <input type="text" placeholder={apiKey ? "輸入訊息或夾帶圖片..." : "請先在左側填入 Gemini API Key 才能開始對話！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!apiKey || isSending} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-4 py-2 text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImage) || isSending || !apiKey} className="bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium px-4 py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                </div>
               </div>
             </form>
           </>
@@ -486,7 +576,7 @@ export default function Home() {
               <svg className="w-6 h-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}><path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
             </div>
             <h3 className="text-sm font-medium text-slate-400">請從左側點選資料夾並「+ 新對話」</h3>
-            <p className="text-xs text-slate-600 mt-1">所有在此建立的對話都會自動依附在資料夾下，並上傳雲端保存。</p>
+            <p className="text-xs text-slate-600 mt-1">所有在此建立的對話與夾帶的圖片，都會完美加密保存於雲端。</p>
           </div>
         )}
       </main>

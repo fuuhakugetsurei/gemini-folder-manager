@@ -51,6 +51,11 @@ npm run dev
 
 ---
 
+#### 4. 待實現
+1. 匯入功能
+2. 時間軸
+3. api金鑰便於匯入
+4. 圖片上傳  
 ## English
 
 A modern, full-stack AI conversation management client built with **Next.js 15 (App Router)**, **Supabase**, and **Google Gemini API**. It solves the limitation of the official Gemini web interface by allowing users to organize chat histories into custom folders with real-time cloud synchronization across all devices.
