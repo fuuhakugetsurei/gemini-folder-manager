@@ -110,8 +110,10 @@ export default function Home() {
   // 📋 複製整篇訊息的反饋狀態
   const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
 
-  // 側邊欄 UI 狀態
+  // 側邊欄 UI 狀態：三點選單（新增 activeFolderMenuId）
+  const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
   const [activeChatMenuId, setActiveChatMenuId] = useState<string | null>(null);
+  
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState('');
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null);
@@ -422,9 +424,9 @@ export default function Home() {
     }
   };
 
-  const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
-    e.stopPropagation(); 
-    if (!confirm('確定要刪除此資料夾嗎？')) return;
+  const handleDeleteFolder = async (folderId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation(); 
+    if (!confirm('確定要刪除此資料夾嗎？裡面的對話也會被刪除！')) return;
     const db = getSupabase();
 
     const { error } = await db.from('folders').delete().eq('id', folderId);
@@ -435,6 +437,7 @@ export default function Home() {
         setCurrentChat(null);
       }
       setConversations(prev => prev.filter(c => c.folder_id !== folderId));
+      setActiveFolderMenuId(null);
     }
   };
 
@@ -818,7 +821,10 @@ export default function Home() {
   const activeHasCredentials = selectedProvider === 'github' ? !!githubToken : (selectedProvider === 'groq' ? !!groqApiKey : !!apiKey);
 
   return (
-    <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative" onClick={() => setActiveChatMenuId(null)}>
+    <div 
+      className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative" 
+      onClick={() => { setActiveChatMenuId(null); setActiveFolderMenuId(null); }}
+    >
       
       {isSidebarOpen && (
         <div onClick={() => setIsSidebarOpen(false)} className="md:hidden fixed inset-0 bg-black/60 z-40 transition-opacity" />
@@ -1157,6 +1163,7 @@ CREATE TABLE conversations (
           </form>
 
           <div className="space-y-4">
+            {/* 我的資料夾列表（全面套用三點式選單） */}
             <div>
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p>
               <div className="space-y-1">
@@ -1170,7 +1177,7 @@ CREATE TABLE conversations (
                       setDragOverFolderId(null);
                       if (draggedChatId) handleMoveChatToFolder(draggedChatId, f.id);
                     }}
-                    className={`group flex items-center justify-between rounded text-xs font-medium transition-all border ${
+                    className={`group relative flex items-center justify-between rounded text-xs font-medium transition-all border ${
                       dragOverFolderId === f.id ? 'border-indigo-500 bg-indigo-600/20 scale-[1.02]' : 'border-transparent'
                     }`}
                   >
@@ -1190,9 +1197,41 @@ CREATE TABLE conversations (
                           <svg className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" /></svg>
                           <span className="truncate max-w-[110px]">{f.name}</span>
                         </button>
-                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-all">
-                          <button onClick={() => { setEditingFolderId(f.id); setEditingFolderName(f.name); }} className="text-slate-500 hover:text-indigo-400 px-1 py-1.5">✏️</button>
-                          <button onClick={(e) => handleDeleteFolder(f.id, e)} className="text-slate-500 hover:text-rose-400 px-1 py-1.5">🗑️</button>
+                        
+                        {/* ✨ 資料夾專用三點式選單 `⋮` */}
+                        <div className="relative">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveFolderMenuId(activeFolderMenuId === f.id ? null : f.id);
+                              setActiveChatMenuId(null);
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-slate-800 transition-colors"
+                          >
+                            ⋮
+                          </button>
+
+                          {activeFolderMenuId === f.id && (
+                            <div className="absolute right-0 top-6 w-32 bg-slate-900 border border-slate-800 rounded-xl shadow-2xl z-[100] py-1 animate-fade-in text-xs space-y-0.5">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setEditingFolderId(f.id);
+                                  setEditingFolderName(f.name);
+                                  setActiveFolderMenuId(null);
+                                }}
+                                className="w-full text-left px-3 py-1.5 hover:bg-slate-800 text-slate-300 flex items-center gap-2"
+                              >
+                                <span>✏️</span> 重新命名
+                              </button>
+                              <button
+                                onClick={(e) => handleDeleteFolder(f.id, e)}
+                                className="w-full text-left px-3 py-1.5 hover:bg-rose-950/40 text-rose-400 flex items-center gap-2"
+                              >
+                                <span>🗑️</span> 刪除資料夾
+                              </button>
+                            </div>
+                          )}
                         </div>
                       </>
                     )}
@@ -1238,6 +1277,7 @@ CREATE TABLE conversations (
                               onClick={(e) => {
                                 e.stopPropagation();
                                 setActiveChatMenuId(activeChatMenuId === c.id ? null : c.id);
+                                setActiveFolderMenuId(null);
                               }}
                               className="p-1.5 text-slate-500 hover:text-white rounded hover:bg-slate-800 transition-colors"
                             >
@@ -1275,7 +1315,7 @@ CREATE TABLE conversations (
       </aside>
 
       {/* 右側 主對話區域 */}
-      <main className="flex-1 flex flex-col bg-slate-950 h-full overflow-hidden" onClick={() => setActiveChatMenuId(null)}>
+      <main className="flex-1 flex flex-col bg-slate-950 h-full overflow-hidden" onClick={() => { setActiveChatMenuId(null); setActiveFolderMenuId(null); }}>
         {currentChat ? (
           <>
             <header className="p-3 md:p-4 border-b border-slate-900 bg-slate-900/30 flex items-center justify-between gap-2 flex-shrink-0">
@@ -1461,7 +1501,6 @@ CREATE TABLE conversations (
             </form>
           </>
         ) : (
-          /* ✨ 關鍵修復處：未選取任何對話時的補丁，加上左上角喚醒漢堡按鈕 */
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center relative">
             <button 
               onClick={() => setIsSidebarOpen(true)} 

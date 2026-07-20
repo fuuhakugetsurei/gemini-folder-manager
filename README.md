@@ -1,10 +1,9 @@
 # 📂 Gemini & Multi-Model Folder Manager (多模型對話工作區雲端管理助手)
+
+
+### 這是一個基於 **Next.js 15 (App Router)**、**Supabase** 打造的強大全端 AI 對話工作區。它徹底解決了官方 Web App 缺乏「資料夾分類」的痛點，並整合了 **多模型提供商 (Multi-Provider)**、**前端即時圖片壓縮**、**503 自動降級備援** 以及 **Bring Your Own Database (自訂私有雲端)** 等進階功能。
+
 ---
-## 繁體中文
-
-這是一個基於 **Next.js 15 (App Router)**、**Supabase** 打造的強大全端 AI 對話工作區。它徹底解決了官方 Web App 缺乏「資料夾分類」的痛點，並整合了 **多模型提供商 (Multi-Provider)**、**前端即時圖片壓縮**、**503 自動降級備援** 以及 **Bring Your Own Database (自訂私有雲端)** 等進階功能。
-
-
 ### 💬 邀請密鑰與社群支援 (Discord Support)
 
 本工作區目前設有 **邀請密鑰（Invite Code）存取控制機制**。若您在登入 Google 帳號後遇到密鑰鎖定，請加入我們的 Discord 官方社群並前往開單區詢問：
