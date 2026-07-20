@@ -8,6 +8,52 @@ import { supabase, Folder, Conversation } from '@/lib/supabase';
 import { User } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
 
+// 🛠️ 輔助函式：前端 Canvas 自動壓縮圖片
+const compressImage = (file: File, maxWidth = 1920, maxHeight = 1920, quality = 0.75): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.src = URL.createObjectURL(file);
+    image.onload = () => {
+      let width = image.width;
+      let height = image.height;
+
+      if (width > maxWidth || height > maxHeight) {
+        if (width / height > maxWidth / maxHeight) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas Context 獲取失敗'));
+        return;
+      }
+
+      ctx.drawImage(image, 0, 0, width, height);
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('圖片壓縮轉換失敗'));
+          }
+        },
+        'image/jpeg',
+        quality
+      );
+    };
+    image.onerror = (err) => reject(err);
+  });
+};
+
 export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
@@ -174,28 +220,37 @@ export default function Home() {
     }
   };
 
-  // 萬用文件夾帶分流處理
+  // 🚀 優化版：萬用文件夾帶分流處理（整合 Canvas 壓圖機制）
   const handleUniversalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
     const fileType = file.type;
-    const fileExt = file.name.split('.').pop()?.toLowerCase() || '';
-
-    if (file.size > 4 * 1024 * 1024) {
-      alert('檔案大小超過 4MB 限制！請優化體積後重新上傳。');
-      return;
-    }
 
     if (fileType.startsWith('image/')) {
       setIsUploadingImage(true);
       try {
-        const fileName = `${user.id}/${Date.now()}.${fileExt}`;
+        // 1. 前端 Canvas 輕量壓縮
+        const compressedBlob = await compressImage(file, 1920, 1920, 0.75);
+        
+        // 2. 構建不重複檔名
+        const fileName = `${user.id}/${Date.now()}.jpg`;
+
+        // 3. 上傳 Supabase Storage (附帶正確的 contentType 與 upsert 參數)
         const { error } = await supabase.storage
           .from('images')
-          .upload(fileName, file, { cacheControl: '3600', upsert: true });
+          .upload(fileName, compressedBlob, {
+            contentType: 'image/jpeg',
+            cacheControl: '3600',
+            upsert: true
+          });
 
-        if (error) throw error;
+        if (error) {
+          if (error.message.includes('row-level security')) {
+            throw new Error('Supabase Storage 權限未設定！請確保在 Supabase Console 中的 Storage Policies 允許 anon/authenticated 角色的 INSERT 權限。');
+          }
+          throw error;
+        }
 
         const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
         setAttachedImageUrl(publicUrl);
@@ -207,6 +262,10 @@ export default function Home() {
         setIsUploadingImage(false);
       }
     } else {
+      if (file.size > 4 * 1024 * 1024) {
+        alert('純文字/程式碼檔案大小超過 4MB 限制！');
+        return;
+      }
       setAttachedFileName(file.name);
       const reader = new FileReader();
       reader.onload = (event) => {
@@ -370,7 +429,7 @@ export default function Home() {
     }
   };
 
-  // 核心：呼叫 Gemini API 並強制全域同步狀態
+  // 🚀 核心優化：呼叫 Gemini API 並進行歷史圖片 Payload 裁剪
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || !currentChat || !apiKey || isSending) return;
@@ -407,7 +466,7 @@ export default function Home() {
     try {
       const ai = new GoogleGenAI({ apiKey: apiKey });
       
-      const contents = await Promise.all(updatedMessages.map(async (msg) => {
+      const contents = await Promise.all(updatedMessages.map(async (msg, index) => {
         if (msg.role === 'model') {
           return { role: 'model', parts: [{ text: msg.content }] };
         }
@@ -418,7 +477,10 @@ export default function Home() {
 
         const parts: any[] = [];
         
-        if (match) {
+        // ⚡ 關鍵優化：只對「最新發送的那一條訊息」下載圖片轉 Base64 餵給 Gemini；歷史對話只保留文字標籤
+        const isLatestMessage = index === updatedMessages.length - 1;
+
+        if (match && isLatestMessage) {
           const cleanText = text.replace(urlRegex, '').trim();
           if (cleanText) parts.push({ text: cleanText });
           
@@ -439,6 +501,7 @@ export default function Home() {
             });
           } catch (fetchErr) {
             console.error("流式抓取儲存桶圖片失敗:", fetchErr);
+            parts.push({ text: text });
           }
         } else {
           parts.push({ text: text });
@@ -562,7 +625,7 @@ export default function Home() {
               </button>
             </div>
 
-            {/* ✨【整合項目 1】將模型切換移入彈窗頂部 */}
+            {/* ✨【整合項目 1】模型切換 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">AI 三系列核心選擇</label>
               <select 
@@ -579,7 +642,7 @@ export default function Home() {
               </p>
             </div>
 
-            {/* ✨【整合項目 2】將 API KEY 設定區移入彈窗內部 */}
+            {/* ✨【整合項目 2】API KEY 設定區 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Gemini API Key 憑證</label>
               <input 
@@ -621,8 +684,8 @@ export default function Home() {
               >
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🖼️</span>
                 <div>
-                  <p className="text-xs font-semibold text-slate-200">圖片太大無法上傳？</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">教你如何快速壓縮圖片以符合 4MB 資料庫安全限制</p>
+                  <p className="text-xs font-semibold text-slate-200">圖片傳輸與壓縮說明</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">了解系統如何自動壓縮圖片以大幅加快傳輸速度</p>
                 </div>
               </button>
             </div>
@@ -704,7 +767,7 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <span className="text-xl">{activeGuide === 'api' ? '🔑' : '🖼️'}</span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">
-                  {activeGuide === 'api' ? 'Google AI Studio 密鑰指南' : '圖片體積優化指南'}
+                  {activeGuide === 'api' ? 'Google AI Studio 密鑰指南' : '圖片傳輸與壓縮說明'}
                 </h3>
               </div>
               <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
@@ -724,10 +787,10 @@ export default function Home() {
                 </>
               ) : (
                 <>
-                  <p className="font-semibold text-emerald-400">為了防止雲端儲存桶在一夜之間被不小心撐爆，本站設有 4MB 的安全限制。如果圖片太大家可以這樣解決：</p>
+                  <p className="font-semibold text-emerald-400">本系統已內建 HTML5 Canvas 前端自動壓縮技術：</p>
                   <ul className="list-disc pl-4 space-y-2 text-slate-400">
-                    <li><span className="text-slate-200 font-semibold">手機端截圖處理</span>：直接將手機截圖進行適度裁切，只留下需要發問的代碼或算式區域，體積通常會瞬間暴跌 80%！</li>
-                    <li><span className="text-slate-200 font-semibold">降檔解析度</span>：避免直接發送 4K 原圖，將解析度降為 1080p，即可完美兼顧清晰度與伺服器硬碟空間！</li>
+                    <li><span className="text-slate-200 font-semibold">自動降頻壓縮</span>：不論相片原始體積多大，上傳時皆會自動等比縮放至最大 1920px 並轉為高畫質 75% JPEG，體積暴降 80%~90%。</li>
+                    <li><span className="text-slate-200 font-semibold">極速直推</span>：體積大幅減少後，上傳至 Supabase Storage CDN 的時間可縮短至 0.5 秒內。</li>
                   </ul>
                 </>
               )}
@@ -752,7 +815,6 @@ export default function Home() {
         ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}
       >
         <div className="p-4 overflow-y-auto flex-1">
-          {/* ✨【格局修正】將更多擴充功能組件縮小為 ⚙️ 圖標，緊貼標題欄最右側 */}
           <div className="flex items-center justify-between mb-4 border-b border-slate-800/50 pb-2">
             <h2 className="text-xl font-bold text-indigo-400 tracking-wide">對話工作區</h2>
             <div className="flex items-center gap-1">
@@ -937,14 +999,14 @@ export default function Home() {
                 
                 {isUploadingImage && (
                   <div className="text-xs text-indigo-400 animate-pulse bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
-                    ⏳ 正在將相片直推至 Supabase Storage 儲存桶...
+                    ⏳ 正在即時壓縮並推送至 Supabase Storage...
                   </div>
                 )}
 
                 {attachedImageUrl && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit animate-fade-in">
                     <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已上傳至雲端 CDN 桶</span>
+                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已極速壓縮上傳 CDN</span>
                     <button type="button" onClick={() => setAttachedImageUrl(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
