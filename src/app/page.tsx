@@ -888,7 +888,7 @@ export default function Home() {
                     </p>
                     <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
                       <li>前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官網</a>。</li>
-                      <li>點擊 "Get API key" $\rightarrow$ "Create API key"。</li>
+                      <li>點擊 "Get API key" → "Create API key"。</li>
                       <li>複製生成的 Key 貼入本站 Gemini 金鑰欄。</li>
                     </ol>
                   </div>
@@ -898,7 +898,7 @@ export default function Home() {
                       <span>🐙 2. GitHub Personal Access Token (GitHub Models 備援)</span>
                     </p>
                     <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
-                      <li>前往 GitHub Settings $\rightarrow$ Developer Settings $\rightarrow$ Personal Access Tokens $\rightarrow$ Fine-grained tokens。</li>
+                      <li>前往 GitHub Settings → Developer Settings → Personal Access Tokens → Fine-grained tokens。</li>
                       <li>點擊 "Generate new token"，名稱隨意（如 `GitHub Models`）。</li>
                       <li>在 <b>Account permissions</b> 區塊下找到 <b>Models</b>，務必將權限設為 <b>Read-only</b>。</li>
                       <li>點擊生成後，複製 `github_pat_...` 貼入 GitHub PAT 欄。</li>
