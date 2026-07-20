@@ -60,13 +60,17 @@ export default function Home() {
   // 輸入與控制狀態
   const [inputMessage, setInputMessage] = useState('');
   const [newFolderName, setNewFolderName] = useState('');
+  
+  // 🔑 API 憑證與提供商狀態
   const [apiKey, setApiKey] = useState(''); // Gemini API Key
   const [githubToken, setGithubToken] = useState(''); // GitHub Models PAT
-  const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'github'>('gemini'); // 預設 Gemini
+  const [groqApiKey, setGroqApiKey] = useState(''); // Groq API Key
+  const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'github' | 'groq'>('gemini'); // 預設 Gemini
+
   const [isSending, setIsSending] = useState(false);
   const [apiErrorStatus, setApiErrorStatus] = useState<string | null>(null);
 
-  // 側邊欄 UI 狀態：三點選單 / 重命名 / 搬移
+  // 側邊欄 UI 狀態
   const [activeChatMenuId, setActiveChatMenuId] = useState<string | null>(null);
   const [editingChatId, setEditingChatId] = useState<string | null>(null);
   const [editingChatTitle, setEditingChatTitle] = useState('');
@@ -85,6 +89,7 @@ export default function Home() {
   // 模型切換狀態
   const [selectedGeminiModel, setSelectedGeminiModel] = useState('gemini-3.5-flash');
   const [selectedGithubModel, setSelectedGithubModel] = useState('gpt-4.1-mini');
+  const [selectedGroqModel, setSelectedGroqModel] = useState('llama-3.3-70b-versatile');
   
   // 🔐 邀請密鑰專用防禦狀態
   const [isVerified, setIsVerified] = useState<boolean | null>(null); 
@@ -100,8 +105,6 @@ export default function Home() {
   // Modal 狀態
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isFeaturesMenuOpen, setIsFeaturesMenuOpen] = useState(false);
-  
-  // 📥 匯入控制艙與用戶引導彈窗狀態
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importedFileName, setImportedFileName] = useState<string | null>(null);
   const [parsedMessages, setParsedMessages] = useState<{ role: string; content: string }[]>([]);
@@ -131,6 +134,9 @@ export default function Home() {
     const savedGithubToken = localStorage.getItem('github_token');
     if (savedGithubToken) setGithubToken(savedGithubToken);
 
+    const savedGroqKey = localStorage.getItem('groq_api_key');
+    if (savedGroqKey) setGroqApiKey(savedGroqKey);
+
     const savedProvider = localStorage.getItem('selected_provider');
     if (savedProvider) setSelectedProvider(savedProvider as any);
 
@@ -139,6 +145,9 @@ export default function Home() {
 
     const savedGithubModel = localStorage.getItem('github_selected_model');
     if (savedGithubModel) setSelectedGithubModel(savedGithubModel);
+
+    const savedGroqModel = localStorage.getItem('groq_selected_model');
+    if (savedGroqModel) setSelectedGroqModel(savedGroqModel);
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
@@ -168,7 +177,12 @@ export default function Home() {
     localStorage.setItem('github_token', token);
   };
 
-  const saveProvider = (provider: 'gemini' | 'github') => {
+  const saveGroqKey = (key: string) => {
+    setGroqApiKey(key);
+    localStorage.setItem('groq_api_key', key);
+  };
+
+  const saveProvider = (provider: 'gemini' | 'github' | 'groq') => {
     setSelectedProvider(provider);
     localStorage.setItem('selected_provider', provider);
   };
@@ -429,7 +443,7 @@ export default function Home() {
     }
   };
 
-  // 🌐 GitHub Models API 專用 Fetch 呼叫器
+  // 🌐 GitHub Models API 呼叫器
   const callGitHubModels = async (targetMessages: { role: string; content: string }[]) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
@@ -461,7 +475,39 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（GitHub Models 未能取得回應）';
   };
 
-  // 🚀 Gemini API 專用呼叫器 (含 503 自動退避與 GitHub 備援)
+  // ⚡ Groq Cloud API 呼叫器 (超高速 LPU 引擎)
+  const callGroqAPI = async (targetMessages: { role: string; content: string }[]) => {
+    const formattedMessages = targetMessages.map(msg => ({
+      role: msg.role === 'model' ? 'assistant' : 'user',
+      content: msg.content
+    }));
+
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${groqApiKey}`
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: "system", content: "你是一個專業、精準的學術與程式助手。當使用者使用中文與你對話時，你必須、且只能使用『繁體中文（台灣習慣用語）』進行回覆。如果回答中涉及數學公式、定理、階乘、算式或變數，你必須嚴格使用標準 LaTeX 語法包裹，行內公式使用 $...$ 包裹，獨立區塊公式使用 $$...$$ 包裹。" },
+          ...formattedMessages
+        ],
+        model: selectedGroqModel,
+        temperature: 0.7
+      })
+    });
+
+    if (!response.ok) {
+      const errJson = await response.json().catch(() => ({}));
+      throw new Error(errJson.error?.message || `Groq API 失敗 (HTTP ${response.status})`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || '（Groq 未能取得回應）';
+  };
+
+  // 🚀 Gemini API 呼叫器 (含 503 退避與備援)
   const callGeminiWithRetry = async (targetMessages: { role: string; content: string }[]) => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
@@ -515,8 +561,11 @@ export default function Home() {
           retryDelay *= 2;
         } else {
           if (githubToken) {
-            console.warn("⚠️ Gemini API 塞車，全自動切換至 GitHub Models 備援備份！");
+            console.warn("⚠️ Gemini API 塞車，全自動切換至 GitHub Models 備援！");
             return await callGitHubModels(targetMessages);
+          } else if (groqApiKey) {
+            console.warn("⚠️ Gemini API 塞車，全自動切換至 Groq LPU 備援！");
+            return await callGroqAPI(targetMessages);
           }
           throw apiErr;
         }
@@ -525,7 +574,7 @@ export default function Home() {
     throw new Error('Gemini API 高峰期服務不可用');
   };
 
-  // 🚀 核心訊息處理中樞 (自動分流)
+  // 🚀 核心訊息處理中樞 (三分流路由)
   const executeSendMessage = async (targetMessages: { role: string; content: string }[]) => {
     if (!currentChat) return;
     
@@ -539,6 +588,9 @@ export default function Home() {
       if (selectedProvider === 'github') {
         if (!githubToken) throw new Error('請先在設定中填入 GitHub PAT 金鑰！');
         modelResponseText = await callGitHubModels(targetMessages);
+      } else if (selectedProvider === 'groq') {
+        if (!groqApiKey) throw new Error('請先在設定中填入 Groq API Key！');
+        modelResponseText = await callGroqAPI(targetMessages);
       } else {
         if (!apiKey) throw new Error('請先在設定中填入 Gemini API Key！');
         modelResponseText = await callGeminiWithRetry(targetMessages);
@@ -566,7 +618,7 @@ export default function Home() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    const hasCredentials = selectedProvider === 'github' ? !!githubToken : !!apiKey;
+    const hasCredentials = selectedProvider === 'github' ? !!githubToken : (selectedProvider === 'groq' ? !!groqApiKey : !!apiKey);
     if ((!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || !currentChat || !hasCredentials || isSending) return;
 
     let finalContent = inputMessage.trim();
@@ -665,7 +717,7 @@ export default function Home() {
     );
   }
 
-  const activeHasCredentials = selectedProvider === 'github' ? !!githubToken : !!apiKey;
+  const activeHasCredentials = selectedProvider === 'github' ? !!githubToken : (selectedProvider === 'groq' ? !!groqApiKey : !!apiKey);
 
   return (
     <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden relative" onClick={() => setActiveChatMenuId(null)}>
@@ -698,7 +750,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ⚙️ 超級控制艙 */}
+      {/* ⚙️ 超級控制艙：支援 Gemini / GitHub / Groq */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -719,12 +771,13 @@ export default function Home() {
                 className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
                 <option value="gemini">Google Gemini API (原生預設)</option>
-                <option value="github">GitHub Models (高峰期超強備援)</option>
+                <option value="github">GitHub Models (GPT-4.1 / 4o 備援)</option>
+                <option value="groq">Groq Cloud (LPU 超極速引擎)</option>
               </select>
             </div>
 
             {/* 動態渲染不同 Provider 的 Key 與模型選擇 */}
-            {selectedProvider === 'gemini' ? (
+            {selectedProvider === 'gemini' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
                   <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Gemini API Key 憑證</label>
@@ -738,7 +791,9 @@ export default function Home() {
                   </select>
                 </div>
               </div>
-            ) : (
+            )}
+
+            {selectedProvider === 'github' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
                   <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">GitHub Personal Access Token (PAT)</label>
@@ -758,7 +813,25 @@ export default function Home() {
               </div>
             )}
 
-            {/* ✨ 更新文案後的輔助功能選單 */}
+            {selectedProvider === 'groq' && (
+              <div className="space-y-3">
+                <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Groq Cloud API Key</label>
+                  <input type="password" placeholder="貼上 gsk_... 金鑰" value={groqApiKey} onChange={(e) => saveGroqKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500" />
+                </div>
+                <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
+                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Groq LPU 模型項目</label>
+                  <select value={selectedGroqModel} onChange={(e) => { setSelectedGroqModel(e.target.value); localStorage.setItem('groq_selected_model', e.target.value); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
+                    <option value="llama-3.3-70b-versatile">Meta Llama 3.3 70B (推薦·全能極速)</option>
+                    <option value="llama-3.1-8b-instant">Meta Llama 3.1 8B (瞬間回應)</option>
+                    <option value="mixtral-8x7b-32768">Mixtral 8x7B (長文本長記憶)</option>
+                    <option value="gemma2-9b-it">Google Gemma 2 9B</option>
+                  </select>
+                </div>
+              </div>
+            )}
+
+            {/* 輔助功能選單 */}
             <div className="grid grid-cols-1 gap-2.5 pt-1">
               <button
                 onClick={() => { setIsImportModalOpen(true); setIsFeaturesMenuOpen(false); }}
@@ -778,7 +851,7 @@ export default function Home() {
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🔑</span>
                 <div>
                   <p className="text-xs font-semibold text-slate-200">如何取得免費 API Key / PAT？</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">引導前往 Google AI Studio 與 GitHub 申請專屬憑證</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">引導前往 Google, GitHub 與 Groq 申請專屬憑證</p>
                 </div>
               </button>
 
@@ -863,7 +936,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 💡 ✨ 最新升級：二級靜態用戶引導控制艙 */}
+      {/* 💡 三核心憑證指南彈窗 */}
       {activeGuide && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -871,7 +944,7 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <span className="text-xl">{activeGuide === 'api' ? '🔑' : '⚡'}</span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">
-                  {activeGuide === 'api' ? '雙模型憑證 (Key / PAT) 申請指南' : '前端全自動圖片壓縮說明'}
+                  {activeGuide === 'api' ? '三模型憑證 (Key / PAT) 申請指南' : '前端全自動圖片壓縮說明'}
                 </h3>
               </div>
               <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
@@ -882,36 +955,28 @@ export default function Home() {
             <div className="text-xs text-slate-300 leading-relaxed space-y-4 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
               {activeGuide === 'api' ? (
                 <>
-                  <div className="space-y-2 border-b border-slate-800 pb-3">
-                    <p className="font-semibold text-indigo-400 flex items-center gap-1.5">
-                      <span>⚡ 1. Google AI Studio Key (Gemini 原生)</span>
-                    </p>
-                    <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
-                      <li>前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官網</a>。</li>
-                      <li>點擊 "Get API key" → "Create API key"。</li>
-                      <li>複製生成的 Key 貼入本站 Gemini 金鑰欄。</li>
-                    </ol>
+                  <div className="space-y-1.5 border-b border-slate-800 pb-2.5">
+                    <p className="font-semibold text-indigo-400">⚡ 1. Google AI Studio Key (Gemini 原生)</p>
+                    <p className="text-[11px] text-slate-400">前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold">Google AI Studio</a> → 點擊 "Get API key" → "Create API key" 並複製。</p>
                   </div>
 
-                  <div className="space-y-2">
-                    <p className="font-semibold text-emerald-400 flex items-center gap-1.5">
-                      <span>🐙 2. GitHub Personal Access Token (GitHub Models 備援)</span>
-                    </p>
-                    <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
-                      <li>前往 GitHub Settings → Developer Settings → Personal Access Tokens → Fine-grained tokens。</li>
-                      <li>點擊 "Generate new token"，名稱隨意（如 `GitHub Models`）。</li>
-                      <li>在 <b>Account permissions</b> 區塊下找到 <b>Models</b>，務必將權限設為 <b>Read-only</b>。</li>
-                      <li>點擊生成後，複製 `github_pat_...` 貼入 GitHub PAT 欄。</li>
-                    </ol>
+                  <div className="space-y-1.5 border-b border-slate-800 pb-2.5">
+                    <p className="font-semibold text-emerald-400">🐙 2. GitHub Personal Access Token (GitHub Models)</p>
+                    <p className="text-[11px] text-slate-400">前往 GitHub Settings → Developer Settings → Fine-grained tokens → 將 <b>Account permissions: Models</b> 設為 <b>Read-only</b> 後生成。</p>
+                  </div>
+
+                  <div className="space-y-1.5">
+                    <p className="font-semibold text-amber-400">🚀 3. Groq Cloud API Key (LPU 超極速引擎)</p>
+                    <p className="text-[11px] text-slate-400">前往 <a href="https://console.groq.com/" target="_blank" rel="noreferrer" className="text-amber-400 underline font-semibold">Groq Console</a> → 點擊 "API Keys" → "Create API Key" 即可秒級取得！</p>
                   </div>
                 </>
               ) : (
                 <>
                   <p className="font-semibold text-emerald-400">✨ 本系統已全面升級為「全自動 Canvas 前端即時壓縮」：</p>
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-400">
-                    <p><span className="text-slate-200 font-semibold">零手動干預</span>：選擇任何相片（包含 4K 原圖或幾十 MB 照片），系統會在背景自動以 HTML5 Canvas 處理。</p>
-                    <p><span className="text-slate-200 font-semibold">智慧降頻</span>：最大寬高自動鎖定 1920px、品質設為 75% 高清 JPEG，體積瞬間暴降 80%~90%（降至 200KB~400KB 左右）。</p>
-                    <p><span className="text-slate-200 font-semibold">極速上傳</span>：體積縮小後，推送至 Supabase Storage CDN 只需 0.5 秒，且完美繞過資料庫 4MB 上傳限制與 RLS 異常！</p>
+                    <p><span className="text-slate-200 font-semibold">零手動干預</span>：選擇任何相片，系統會在背景自動以 HTML5 Canvas 處理。</p>
+                    <p><span className="text-slate-200 font-semibold">智慧降頻</span>：最大寬高自動鎖定 1920px、品質設為 75% 高清 JPEG，體積暴降 80%~90%。</p>
+                    <p><span className="text-slate-200 font-semibold">極速上傳</span>：推送至 Supabase Storage CDN 只需 0.5 秒，且完美繞過 4MB 限制與 RLS 異常！</p>
                   </div>
                 </>
               )}
@@ -1073,7 +1138,7 @@ export default function Home() {
                 <h3 className="font-semibold text-xs md:text-sm text-slate-200 truncate">{currentChat.title}</h3>
               </div>
               <span className="text-[10px] bg-indigo-950/60 text-indigo-400 px-2 py-0.5 rounded border border-indigo-800/40 flex-shrink-0 font-mono">
-                {selectedProvider === 'github' ? `GitHub: ${selectedGithubModel}` : `Gemini: ${selectedGeminiModel}`}
+                {selectedProvider === 'github' ? `GitHub: ${selectedGithubModel}` : (selectedProvider === 'groq' ? `Groq: ${selectedGroqModel}` : `Gemini: ${selectedGeminiModel}`)}
               </span>
             </header>
 
@@ -1152,7 +1217,7 @@ export default function Home() {
                 {isSending && (
                   <div className="flex justify-start">
                     <div className="text-slate-400 text-xs md:text-sm animate-pulse flex items-center gap-2">
-                      <span>✨ AI 正在解構上下文與算式 ({selectedProvider === 'github' ? 'GitHub Models' : 'Gemini Core'})...</span>
+                      <span>✨ AI 正在解構上下文與算式 ({selectedProvider === 'github' ? 'GitHub Models' : (selectedProvider === 'groq' ? 'Groq LPU' : 'Gemini Core')})...</span>
                     </div>
                   </div>
                 )}
