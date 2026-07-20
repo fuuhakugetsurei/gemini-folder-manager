@@ -4,8 +4,8 @@ import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 import { useState, useEffect, useRef } from 'react';
-import { supabase, Folder, Conversation } from '@/lib/supabase';
-import { User } from '@supabase/supabase-js';
+import { supabase as defaultSupabase, Folder, Conversation } from '@/lib/supabase';
+import { User, createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
 
 // 🛠️ 輔助函式：前端 Canvas 自動壓縮圖片
@@ -51,6 +51,11 @@ export default function Home() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   
+  // 🗄️ 自訂 Supabase 資料庫模式狀態
+  const [storageMode, setStorageMode] = useState<'default' | 'custom'>('default');
+  const [customSupabaseUrl, setCustomSupabaseUrl] = useState('');
+  const [customSupabaseAnonKey, setCustomSupabaseAnonKey] = useState('');
+
   // 核心資料狀態
   const [folders, setFolders] = useState<Folder[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -65,7 +70,7 @@ export default function Home() {
   const [apiKey, setApiKey] = useState(''); // Gemini API Key
   const [githubToken, setGithubToken] = useState(''); // GitHub Models PAT
   const [groqApiKey, setGroqApiKey] = useState(''); // Groq API Key
-  const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'github' | 'groq'>('gemini'); // 預設 Gemini
+  const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'github' | 'groq'>('gemini');
 
   const [isSending, setIsSending] = useState(false);
   const [apiErrorStatus, setApiErrorStatus] = useState<string | null>(null);
@@ -110,24 +115,52 @@ export default function Home() {
   const [parsedMessages, setParsedMessages] = useState<{ role: string; content: string }[]>([]);
   const [firstQuestionTitle, setFirstQuestionTitle] = useState('');
   const [isImporting, setIsImporting] = useState(false);
-  const [activeGuide, setActiveGuide] = useState<'api' | 'compress' | null>(null);
+  const [activeGuide, setActiveGuide] = useState<'api' | 'compress' | 'db' | null>(null);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // ⚡ 動態 Client 工廠：判斷使用預設庫還是使用者自訂 Supabase 庫
+  const getSupabase = () => {
+    if (storageMode === 'custom' && customSupabaseUrl.trim() && customSupabaseAnonKey.trim()) {
+      try {
+        return createClient(customSupabaseUrl.trim(), customSupabaseAnonKey.trim());
+      } catch (err) {
+        console.error("自訂 Supabase 初始化失敗，降級至預設庫", err);
+        return defaultSupabase;
+      }
+    }
+    return defaultSupabase;
+  };
+
   useEffect(() => {
+    // 讀取 Supabase 儲存庫設定
+    const savedStorageMode = localStorage.getItem('supabase_storage_mode') as 'default' | 'custom';
+    if (savedStorageMode) setStorageMode(savedStorageMode);
+
+    const savedCustomUrl = localStorage.getItem('custom_supabase_url');
+    if (savedCustomUrl) setCustomSupabaseUrl(savedCustomUrl);
+
+    const savedCustomKey = localStorage.getItem('custom_supabase_key');
+    if (savedCustomKey) setCustomSupabaseAnonKey(savedCustomKey);
+
+    // 初始化與 Auth 監聽
+    const activeDb = (savedStorageMode === 'custom' && savedCustomUrl && savedCustomKey) 
+      ? createClient(savedCustomUrl, savedCustomKey) 
+      : defaultSupabase;
+
     const checkUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
+      const { data: { user } } = await activeDb.auth.getUser();
       setUser(user);
       setLoading(false);
       if (user) {
-        fetchFolders();
-        fetchConversations();
-        checkUserVerification(user.id);
+        fetchFolders(activeDb);
+        fetchConversations(activeDb);
+        checkUserVerification(user.id, activeDb);
       }
     };
     checkUser();
 
-    // 本地持久化設定讀取
+    // 讀取模型與 API 憑證
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
@@ -149,23 +182,38 @@ export default function Home() {
     const savedGroqModel = localStorage.getItem('groq_selected_model');
     if (savedGroqModel) setSelectedGroqModel(savedGroqModel);
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = activeDb.auth.onAuthStateChange((_event, session) => {
       const currentUser = session?.user ?? null;
       setUser(currentUser);
       if (currentUser) {
-        fetchFolders();
-        fetchConversations();
-        checkUserVerification(currentUser.id);
+        fetchFolders(activeDb);
+        fetchConversations(activeDb);
+        checkUserVerification(currentUser.id, activeDb);
       } else {
         setIsVerified(null);
       }
     });
     return () => subscription.unsubscribe();
-  }, []);
+  }, [storageMode, customSupabaseUrl, customSupabaseAnonKey]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [currentChat?.messages]);
+
+  const saveStorageMode = (mode: 'default' | 'custom') => {
+    setStorageMode(mode);
+    localStorage.setItem('supabase_storage_mode', mode);
+  };
+
+  const saveCustomSupabaseUrl = (url: string) => {
+    setCustomSupabaseUrl(url);
+    localStorage.setItem('custom_supabase_url', url);
+  };
+
+  const saveCustomSupabaseKey = (key: string) => {
+    setCustomSupabaseAnonKey(key);
+    localStorage.setItem('custom_supabase_key', key);
+  };
 
   const saveApiKey = (key: string) => {
     setApiKey(key);
@@ -187,9 +235,9 @@ export default function Home() {
     localStorage.setItem('selected_provider', provider);
   };
 
-  const checkUserVerification = async (userId: string) => {
+  const checkUserVerification = async (userId: string, dbInstance = getSupabase()) => {
     try {
-      const { data } = await supabase.from('invite_codes').select('code').eq('assigned_to_user_id', userId);
+      const { data } = await dbInstance.from('invite_codes').select('code').eq('assigned_to_user_id', userId);
       setIsVerified(!!(data && data.length > 0));
     } catch (err) {
       setIsVerified(false);
@@ -201,8 +249,9 @@ export default function Home() {
     if (!inviteCodeInput.trim() || !user || verifying) return;
     setVerifying(true);
 
+    const db = getSupabase();
     try {
-      const { data: codeData, error: fetchError } = await supabase
+      const { data: codeData, error: fetchError } = await db
         .from('invite_codes')
         .select('*')
         .eq('code', inviteCodeInput.trim())
@@ -215,7 +264,7 @@ export default function Home() {
         return;
       }
 
-      const { error: updateError } = await supabase
+      const { error: updateError } = await db
         .from('invite_codes')
         .update({ is_used: true, assigned_to_user_id: user.id })
         .eq('code', inviteCodeInput.trim());
@@ -234,19 +283,21 @@ export default function Home() {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
+    const db = getSupabase();
+
     if (file.type.startsWith('image/')) {
       setIsUploadingImage(true);
       try {
         const compressedBlob = await compressImage(file, 1920, 1920, 0.75);
         const fileName = `${user.id}/${Date.now()}.jpg`;
 
-        const { error } = await supabase.storage
+        const { error } = await db.storage
           .from('images')
           .upload(fileName, compressedBlob, { contentType: 'image/jpeg', cacheControl: '3600', upsert: true });
 
         if (error) throw error;
 
-        const { data: { publicUrl } } = supabase.storage.from('images').getPublicUrl(fileName);
+        const { data: { publicUrl } } = db.storage.from('images').getPublicUrl(fileName);
         setAttachedImageUrl(publicUrl);
         setAttachedFileContent(null);
         setAttachedFileName(null);
@@ -267,20 +318,21 @@ export default function Home() {
     }
   };
 
-  const fetchFolders = async () => {
-    const { data } = await supabase.from('folders').select('*').order('created_at', { ascending: true });
+  const fetchFolders = async (dbInstance = getSupabase()) => {
+    const { data } = await dbInstance.from('folders').select('*').order('created_at', { ascending: true });
     setFolders(data || []);
   };
 
-  const fetchConversations = async () => {
-    const { data } = await supabase.from('conversations').select('*').order('updated_at', { ascending: false });
+  const fetchConversations = async (dbInstance = getSupabase()) => {
+    const { data } = await dbInstance.from('conversations').select('*').order('updated_at', { ascending: false });
     setConversations(data || []);
   };
 
   const handleCreateFolder = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newFolderName.trim() || !user) return;
-    const { data } = await supabase.from('folders').insert([{ name: newFolderName.trim(), user_id: user.id }]).select();
+    const db = getSupabase();
+    const { data } = await db.from('folders').insert([{ name: newFolderName.trim(), user_id: user.id }]).select();
     if (data) setFolders(prev => [...prev, data[0]]);
     setNewFolderName('');
   };
@@ -290,7 +342,8 @@ export default function Home() {
       setEditingFolderId(null);
       return;
     }
-    const { error } = await supabase.from('folders').update({ name: editingFolderName.trim() }).eq('id', folderId);
+    const db = getSupabase();
+    const { error } = await db.from('folders').update({ name: editingFolderName.trim() }).eq('id', folderId);
     if (!error) {
       setFolders(prev => prev.map(f => f.id === folderId ? { ...f, name: editingFolderName.trim() } : f));
     }
@@ -302,7 +355,8 @@ export default function Home() {
       setEditingChatId(null);
       return;
     }
-    const { error } = await supabase.from('conversations').update({ title: editingChatTitle.trim() }).eq('id', chatId);
+    const db = getSupabase();
+    const { error } = await db.from('conversations').update({ title: editingChatTitle.trim() }).eq('id', chatId);
     if (!error) {
       setConversations(prev => prev.map(c => c.id === chatId ? { ...c, title: editingChatTitle.trim() } : c));
       if (currentChat?.id === chatId) {
@@ -313,7 +367,8 @@ export default function Home() {
   };
 
   const handleMoveChatToFolder = async (chatId: string, targetFolderId: string) => {
-    const { error } = await supabase.from('conversations').update({ folder_id: targetFolderId }).eq('id', chatId);
+    const db = getSupabase();
+    const { error } = await db.from('conversations').update({ folder_id: targetFolderId }).eq('id', chatId);
     if (!error) {
       setConversations(prev => prev.map(c => c.id === chatId ? { ...c, folder_id: targetFolderId } : c));
       setMovingChatId(null);
@@ -323,8 +378,9 @@ export default function Home() {
 
   const handleCreateChat = async () => {
     if (!user || !selectedFolderId) return alert('請先選擇一個資料夾！');
+    const db = getSupabase();
     
-    const { data } = await supabase
+    const { data } = await db
       .from('conversations')
       .insert([{ user_id: user.id, folder_id: selectedFolderId, title: '新對話', messages: [] }])
       .select();
@@ -339,8 +395,9 @@ export default function Home() {
   const handleDeleteFolder = async (folderId: string, e: React.MouseEvent) => {
     e.stopPropagation(); 
     if (!confirm('確定要刪除此資料夾嗎？')) return;
+    const db = getSupabase();
 
-    const { error } = await supabase.from('folders').delete().eq('id', folderId);
+    const { error } = await db.from('folders').delete().eq('id', folderId);
     if (!error) {
       setFolders(prev => prev.filter(f => f.id !== folderId));
       if (selectedFolderId === folderId) {
@@ -354,8 +411,9 @@ export default function Home() {
   const handleDeleteChat = async (chatId: string, e?: React.MouseEvent) => {
     e?.stopPropagation(); 
     if (!confirm('確定要刪除這場對話紀錄嗎？')) return;
+    const db = getSupabase();
 
-    const { error } = await supabase.from('conversations').delete().eq('id', chatId);
+    const { error } = await db.from('conversations').delete().eq('id', chatId);
     if (!error) {
       setConversations(prev => prev.filter(c => c.id !== chatId));
       if (currentChat?.id === chatId) setCurrentChat(null);
@@ -413,8 +471,9 @@ export default function Home() {
     if (!selectedFolderId) return alert('請先在左側欄選取一個目的地資料夾，再執行匯入！');
 
     setIsImporting(true);
+    const db = getSupabase();
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('conversations')
         .insert([{
           user_id: user.id,
@@ -475,7 +534,7 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（GitHub Models 未能取得回應）';
   };
 
-  // ⚡ Groq Cloud API 呼叫器 (超高速 LPU 引擎)
+  // ⚡ Groq Cloud API 呼叫器
   const callGroqAPI = async (targetMessages: { role: string; content: string }[]) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
@@ -507,7 +566,7 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（Groq 未能取得回應）';
   };
 
-  // 🚀 Gemini API 呼叫器 (含 503 退避與備援)
+  // 🚀 Gemini API 呼叫器
   const callGeminiWithRetry = async (targetMessages: { role: string; content: string }[]) => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
@@ -574,7 +633,7 @@ export default function Home() {
     throw new Error('Gemini API 高峰期服務不可用');
   };
 
-  // 🚀 核心訊息處理中樞 (三分流路由)
+  // 🚀 核心訊息處理中樞
   const executeSendMessage = async (targetMessages: { role: string; content: string }[]) => {
     if (!currentChat) return;
     
@@ -599,7 +658,8 @@ export default function Home() {
       const finalMessages = [...targetMessages, { role: 'model', content: modelResponseText }];
       const currentChatIsoString = new Date().toISOString();
 
-      const { data } = await supabase
+      const db = getSupabase();
+      const { data } = await db
         .from('conversations')
         .update({ messages: finalMessages, updated_at: currentChatIsoString })
         .eq('id', chatId)
@@ -679,12 +739,13 @@ export default function Home() {
   if (loading) return <div className="flex h-screen items-center justify-center bg-slate-900 text-white"><p className="text-lg animate-pulse">載入中...</p></div>;
 
   if (!user) {
+    const activeDb = getSupabase();
     return (
       <main className="flex h-screen flex-col items-center justify-center bg-slate-900 text-white p-4">
         <div className="w-full max-w-md rounded-2xl bg-slate-800 p-8 text-center shadow-xl border border-slate-700">
           <h1 className="mb-2 text-2xl font-bold tracking-tight">Gemini 對話管理助手</h1>
           <p className="mb-8 text-sm text-slate-400">登入後即可開始將對話分類並同步至雲端</p>
-          <button onClick={() => supabase.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })} className="flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-3 font-semibold text-slate-900 transition-all hover:bg-slate-100">
+          <button onClick={() => activeDb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo: window.location.origin } })} className="flex w-full items-center justify-center gap-3 rounded-lg bg-white px-4 py-3 font-semibold text-slate-900 transition-all hover:bg-slate-100">
             使用 Google 帳號登入
           </button>
         </div>
@@ -693,6 +754,7 @@ export default function Home() {
   }
 
   if (isVerified === false) {
+    const activeDb = getSupabase();
     return (
       <main className="flex h-screen flex-col items-center justify-center bg-slate-950 text-white p-4">
         <div className="w-full max-w-md rounded-2xl bg-slate-900 p-8 shadow-xl border border-slate-800">
@@ -709,7 +771,7 @@ export default function Home() {
               <button type="submit" disabled={verifying || !inviteCodeInput.trim()} className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-semibold py-2 rounded-lg transition-colors disabled:opacity-40">
                 {verifying ? '安全校驗中...' : '確認驗證並綁定'}
               </button>
-              <button type="button" onClick={() => supabase.auth.signOut()} className="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs px-3 rounded-lg transition-colors border border-slate-700">登出</button>
+              <button type="button" onClick={() => activeDb.auth.signOut()} className="bg-slate-800 hover:bg-slate-700 text-slate-400 text-xs px-3 rounded-lg transition-colors border border-slate-700">登出</button>
             </div>
           </form>
         </div>
@@ -750,10 +812,10 @@ export default function Home() {
         </div>
       )}
 
-      {/* ⚙️ 超級控制艙：支援 Gemini / GitHub / Groq */}
+      {/* ⚙️ 超級控制艙：整合「自訂 Supabase 雲端庫」與多 Provider */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
-          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
+          <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto scrollbar-none">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <span className="text-xl">⚙️</span>
@@ -762,7 +824,36 @@ export default function Home() {
               <button onClick={() => setIsFeaturesMenuOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">關閉面板 ✕</button>
             </div>
 
-            {/* Provider 提供商選擇器 */}
+            {/* ✨ 1. 雲端資料庫託管模式選擇 (BYO Supabase) */}
+            <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">☁️ Supabase 資料庫模式</label>
+                <button onClick={() => { setActiveGuide('db'); setIsFeaturesMenuOpen(false); }} className="text-[10px] text-indigo-400 hover:underline">建體架構指南</button>
+              </div>
+              <select 
+                value={storageMode} 
+                onChange={(e) => saveStorageMode(e.target.value as any)}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500 cursor-pointer"
+              >
+                <option value="default">預設託管雲端 (站長公共庫)</option>
+                <option value="custom">自訂個人雲端 (Bring Your Own Supabase)</option>
+              </select>
+
+              {storageMode === 'custom' && (
+                <div className="space-y-2 pt-1 border-t border-slate-800/60 mt-2">
+                  <div>
+                    <label className="text-[10px] text-slate-400">Custom Supabase URL</label>
+                    <input type="text" placeholder="https://xxx.supabase.co" value={customSupabaseUrl} onChange={(e) => saveCustomSupabaseUrl(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-slate-400">Custom Supabase Anon Key</label>
+                    <input type="password" placeholder="eyJhbGciOi..." value={customSupabaseAnonKey} onChange={(e) => saveCustomSupabaseKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-200 focus:outline-none focus:border-indigo-500" />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* ✨ 2. AI 模型提供商選擇 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">目前模型提供商 (Provider)</label>
               <select 
@@ -813,6 +904,7 @@ export default function Home() {
               </div>
             )}
 
+            {/* ✨ 清理過期 Groq 模型選項，僅保留高穩定可用模型 */}
             {selectedProvider === 'groq' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -824,8 +916,6 @@ export default function Home() {
                   <select value={selectedGroqModel} onChange={(e) => { setSelectedGroqModel(e.target.value); localStorage.setItem('groq_selected_model', e.target.value); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
                     <option value="llama-3.3-70b-versatile">Meta Llama 3.3 70B (推薦·全能極速)</option>
                     <option value="llama-3.1-8b-instant">Meta Llama 3.1 8B (瞬間回應)</option>
-                    <option value="mixtral-8x7b-32768">Mixtral 8x7B (長文本長記憶)</option>
-                    <option value="gemma2-9b-it">Google Gemma 2 9B</option>
                   </select>
                 </div>
               </div>
@@ -936,15 +1026,17 @@ export default function Home() {
         </div>
       )}
 
-      {/* 💡 三核心憑證指南彈窗 */}
+      {/* 💡 指南彈窗（包含 DB 建置指南與憑證指南） */}
       {activeGuide && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xl">{activeGuide === 'api' ? '🔑' : '⚡'}</span>
+                <span className="text-xl">
+                  {activeGuide === 'api' ? '🔑' : (activeGuide === 'db' ? '☁️' : '⚡')}
+                </span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">
-                  {activeGuide === 'api' ? '三模型憑證 (Key / PAT) 申請指南' : '前端全自動圖片壓縮說明'}
+                  {activeGuide === 'api' ? '三模型憑證 (Key / PAT) 申請指南' : (activeGuide === 'db' ? '個人 Supabase 庫建置 SQL 指南' : '前端全自動圖片壓縮說明')}
                 </h3>
               </div>
               <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
@@ -953,7 +1045,29 @@ export default function Home() {
             </div>
 
             <div className="text-xs text-slate-300 leading-relaxed space-y-4 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
-              {activeGuide === 'api' ? (
+              {activeGuide === 'db' ? (
+                <>
+                  <p className="font-semibold text-indigo-400">若要連線至自訂 Supabase 庫，請在 SQL Editor 執行以下 Table 建置指令：</p>
+                  <pre className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-[10px] font-mono text-amber-400 overflow-x-auto whitespace-pre-wrap">
+{`CREATE TABLE folders (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID NOT NULL,
+  name TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT now()
+);
+
+CREATE TABLE conversations (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  user_id UUID NOT NULL,
+  folder_id UUID REFERENCES folders(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  messages JSONB DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ DEFAULT now()
+);`}
+                  </pre>
+                  <p className="text-[11px] text-slate-400">並請確保手動建立名為 <code className="text-amber-300 font-mono">images</code> 且開起 Public 讀寫權限的 Storage Bucket。</p>
+                </>
+              ) : activeGuide === 'api' ? (
                 <>
                   <div className="space-y-1.5 border-b border-slate-800 pb-2.5">
                     <p className="font-semibold text-indigo-400">⚡ 1. Google AI Studio Key (Gemini 原生)</p>
@@ -1122,7 +1236,7 @@ export default function Home() {
 
         <div className="p-3 bg-slate-900/80 border-t border-slate-800 flex items-center justify-between">
           <span className="text-[11px] text-emerald-400 truncate max-w-[120px]">{user.email}</span>
-          <button onClick={() => supabase.auth.signOut()} className="text-[10px] text-rose-400 hover:bg-rose-950/30 px-1.5 py-0.5 rounded border border-rose-950">登出</button>
+          <button onClick={() => getSupabase().auth.signOut()} className="text-[10px] text-rose-400 hover:bg-rose-950/30 px-1.5 py-0.5 rounded border border-rose-950">登出</button>
         </div>
       </aside>
 
@@ -1137,9 +1251,14 @@ export default function Home() {
                 </button>
                 <h3 className="font-semibold text-xs md:text-sm text-slate-200 truncate">{currentChat.title}</h3>
               </div>
-              <span className="text-[10px] bg-indigo-950/60 text-indigo-400 px-2 py-0.5 rounded border border-indigo-800/40 flex-shrink-0 font-mono">
-                {selectedProvider === 'github' ? `GitHub: ${selectedGithubModel}` : (selectedProvider === 'groq' ? `Groq: ${selectedGroqModel}` : `Gemini: ${selectedGeminiModel}`)}
-              </span>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <span className="text-[10px] bg-slate-800 text-slate-400 px-2 py-0.5 rounded border border-slate-700 font-mono">
+                  {storageMode === 'custom' ? '☁️ 自訂 Supabase' : '☁️ 共享預設庫'}
+                </span>
+                <span className="text-[10px] bg-indigo-950/60 text-indigo-400 px-2 py-0.5 rounded border border-indigo-800/40 font-mono">
+                  {selectedProvider === 'github' ? `GitHub: ${selectedGithubModel}` : (selectedProvider === 'groq' ? `Groq: ${selectedGroqModel}` : `Gemini: ${selectedGeminiModel}`)}
+                </span>
+              </div>
             </header>
 
             <div className="flex-1 h-0 flex flex-row relative">
