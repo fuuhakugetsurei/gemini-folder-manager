@@ -13,7 +13,6 @@ const CodeBlock = ({ children, ...props }: any) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopyCode = () => {
-    // 從 React 子節點中提取純文字程式碼
     const codeText = Array.isArray(children) 
       ? children.map(c => typeof c === 'string' ? c : c?.props?.children || '').join('')
       : (typeof children === 'string' ? children : children?.props?.children || '');
@@ -108,7 +107,7 @@ export default function Home() {
   const [isSending, setIsSending] = useState(false);
   const [apiErrorStatus, setApiErrorStatus] = useState<string | null>(null);
 
-  // 📋 複製整篇訊息的反饋狀態 (對應訊息 index)
+  // 📋 複製整篇訊息的反饋狀態
   const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
 
   // 側邊欄 UI 狀態
@@ -767,7 +766,6 @@ export default function Home() {
     await executeSendMessage(newHistory);
   };
 
-  // 📋 複製整條 AI 回應的輔助函式
   const handleCopyFullResponse = (text: string, index: number) => {
     navigator.clipboard.writeText(text);
     setCopiedMsgIndex(index);
@@ -1347,7 +1345,6 @@ CREATE TABLE conversations (
                           <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
                             {cleanText && (
                               <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3 prose-headings:font-bold prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs md:prose-code:text-sm">
-                                {/* ✨ 關鍵：套用自訂代碼區塊渲染器，提供獨立程式碼複製按鈕 */}
                                 <ReactMarkdown 
                                   remarkPlugins={[remarkMath]} 
                                   rehypePlugins={[rehypeKatex]}
@@ -1360,7 +1357,6 @@ CREATE TABLE conversations (
                               </div>
                             )}
 
-                            {/* ✨ 按鈕區：提供「📋 複製全部回應」與「🔄 重新生成回应」 */}
                             <div className="flex items-center gap-2 pt-1">
                               {cleanText && (
                                 <button
@@ -1465,8 +1461,25 @@ CREATE TABLE conversations (
             </form>
           </>
         ) : (
+          /* ✨ 關鍵修復處：未選取任何對話時的補丁，加上左上角喚醒漢堡按鈕 */
           <div className="flex-1 flex flex-col items-center justify-center p-8 text-center relative">
+            <button 
+              onClick={() => setIsSidebarOpen(true)} 
+              className="md:hidden absolute top-3 left-3 text-slate-400 hover:text-white p-2 rounded bg-slate-900 border border-slate-800 z-10 cursor-pointer"
+              title="展開側邊欄"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </button>
+
+            <div className="w-12 h-12 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-center mb-3">
+              <svg className="w-6 h-6 text-slate-600" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.5}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+              </svg>
+            </div>
             <h3 className="text-xs md:text-sm font-medium text-slate-400">請從左側點選資料夾並「+ 新對話」</h3>
+            <p className="text-[11px] text-slate-600 mt-1 max-w-xs">手機用戶請點選左上角選單圖標展開工作區。</p>
           </div>
         )}
       </main>
