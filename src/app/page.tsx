@@ -8,6 +8,39 @@ import { supabase as defaultSupabase, Folder, Conversation } from '@/lib/supabas
 import { User, createClient } from '@supabase/supabase-js';
 import { GoogleGenAI } from '@google/genai';
 
+// 🛠️ 輔助組件：具備「複製」按鈕的代碼區塊封裝
+const CodeBlock = ({ children, ...props }: any) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopyCode = () => {
+    // 從 React 子節點中提取純文字程式碼
+    const codeText = Array.isArray(children) 
+      ? children.map(c => typeof c === 'string' ? c : c?.props?.children || '').join('')
+      : (typeof children === 'string' ? children : children?.props?.children || '');
+
+    navigator.clipboard.writeText(codeText);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="relative group/code my-3">
+      <div className="absolute right-2 top-2 z-10 opacity-0 group-hover/code:opacity-100 transition-opacity">
+        <button
+          type="button"
+          onClick={handleCopyCode}
+          className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] px-2 py-1 rounded border border-slate-700 shadow flex items-center gap-1 transition-colors"
+        >
+          {copied ? '✓ 已複製程式碼' : '📋 複製程式碼'}
+        </button>
+      </div>
+      <pre {...props} className="bg-slate-900 p-4 rounded-xl border border-slate-800 overflow-x-auto">
+        {children}
+      </pre>
+    </div>
+  );
+};
+
 // 🛠️ 輔助函式：前端 Canvas 自動壓縮圖片
 const compressImage = (file: File, maxWidth = 1920, maxHeight = 1920, quality = 0.75): Promise<Blob> => {
   return new Promise((resolve, reject) => {
@@ -67,13 +100,16 @@ export default function Home() {
   const [newFolderName, setNewFolderName] = useState('');
   
   // 🔑 API 憑證與提供商狀態
-  const [apiKey, setApiKey] = useState(''); // Gemini API Key
-  const [githubToken, setGithubToken] = useState(''); // GitHub Models PAT
-  const [groqApiKey, setGroqApiKey] = useState(''); // Groq API Key
+  const [apiKey, setApiKey] = useState(''); 
+  const [githubToken, setGithubToken] = useState(''); 
+  const [groqApiKey, setGroqApiKey] = useState(''); 
   const [selectedProvider, setSelectedProvider] = useState<'gemini' | 'github' | 'groq'>('gemini');
 
   const [isSending, setIsSending] = useState(false);
   const [apiErrorStatus, setApiErrorStatus] = useState<string | null>(null);
+
+  // 📋 複製整篇訊息的反饋狀態 (對應訊息 index)
+  const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
 
   // 側邊欄 UI 狀態
   const [activeChatMenuId, setActiveChatMenuId] = useState<string | null>(null);
@@ -119,13 +155,11 @@ export default function Home() {
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // ⚡ 動態 Client 工廠：判斷使用預設庫還是使用者自訂 Supabase 庫
   const getSupabase = () => {
     if (storageMode === 'custom' && customSupabaseUrl.trim() && customSupabaseAnonKey.trim()) {
       try {
         return createClient(customSupabaseUrl.trim(), customSupabaseAnonKey.trim());
       } catch (err) {
-        console.error("自訂 Supabase 初始化失敗，降級至預設庫", err);
         return defaultSupabase;
       }
     }
@@ -133,7 +167,6 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // 讀取 Supabase 儲存庫設定
     const savedStorageMode = localStorage.getItem('supabase_storage_mode') as 'default' | 'custom';
     if (savedStorageMode) setStorageMode(savedStorageMode);
 
@@ -143,7 +176,6 @@ export default function Home() {
     const savedCustomKey = localStorage.getItem('custom_supabase_key');
     if (savedCustomKey) setCustomSupabaseAnonKey(savedCustomKey);
 
-    // 初始化與 Auth 監聽
     const activeDb = (savedStorageMode === 'custom' && savedCustomUrl && savedCustomKey) 
       ? createClient(savedCustomUrl, savedCustomKey) 
       : defaultSupabase;
@@ -160,7 +192,6 @@ export default function Home() {
     };
     checkUser();
 
-    // 讀取模型與 API 憑證
     const savedKey = localStorage.getItem('gemini_api_key');
     if (savedKey) setApiKey(savedKey);
 
@@ -736,6 +767,13 @@ export default function Home() {
     await executeSendMessage(newHistory);
   };
 
+  // 📋 複製整條 AI 回應的輔助函式
+  const handleCopyFullResponse = (text: string, index: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedMsgIndex(index);
+    setTimeout(() => setCopiedMsgIndex(null), 2000);
+  };
+
   if (loading) return <div className="flex h-screen items-center justify-center bg-slate-900 text-white"><p className="text-lg animate-pulse">載入中...</p></div>;
 
   if (!user) {
@@ -812,7 +850,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ⚙️ 超級控制艙：整合「自訂 Supabase 雲端庫」與多 Provider */}
+      {/* ⚙️ 超級控制艙 */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto scrollbar-none">
@@ -824,7 +862,7 @@ export default function Home() {
               <button onClick={() => setIsFeaturesMenuOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">關閉面板 ✕</button>
             </div>
 
-            {/* ✨ 1. 雲端資料庫託管模式選擇 (BYO Supabase) */}
+            {/* ☁️ Supabase 資料庫模式選擇 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
               <div className="flex items-center justify-between">
                 <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">☁️ Supabase 資料庫模式</label>
@@ -853,7 +891,7 @@ export default function Home() {
               )}
             </div>
 
-            {/* ✨ 2. AI 模型提供商選擇 */}
+            {/* AI 模型提供商選擇 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">目前模型提供商 (Provider)</label>
               <select 
@@ -867,7 +905,6 @@ export default function Home() {
               </select>
             </div>
 
-            {/* 動態渲染不同 Provider 的 Key 與模型選擇 */}
             {selectedProvider === 'gemini' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -904,7 +941,6 @@ export default function Home() {
               </div>
             )}
 
-            {/* ✨ 清理過期 Groq 模型選項，僅保留高穩定可用模型 */}
             {selectedProvider === 'groq' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -1026,7 +1062,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 💡 指南彈窗（包含 DB 建置指南與憑證指南） */}
+      {/* 💡 指南彈窗 */}
       {activeGuide && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -1310,13 +1346,33 @@ CREATE TABLE conversations (
                         ) : (
                           <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
                             {cleanText && (
-                              <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3 prose-headings:font-bold prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-pre:bg-slate-900 prose-pre:p-4 prose-pre:rounded-xl">
-                                <ReactMarkdown remarkPlugins={[remarkMath]} rehypePlugins={[rehypeKatex]}>{cleanText}</ReactMarkdown>
+                              <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3 prose-headings:font-bold prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs md:prose-code:text-sm">
+                                {/* ✨ 關鍵：套用自訂代碼區塊渲染器，提供獨立程式碼複製按鈕 */}
+                                <ReactMarkdown 
+                                  remarkPlugins={[remarkMath]} 
+                                  rehypePlugins={[rehypeKatex]}
+                                  components={{
+                                    pre: CodeBlock
+                                  }}
+                                >
+                                  {cleanText}
+                                </ReactMarkdown>
                               </div>
                             )}
 
-                            {i === currentChat.messages.length - 1 && !isSending && (
-                              <div className="pt-1">
+                            {/* ✨ 按鈕區：提供「📋 複製全部回應」與「🔄 重新生成回应」 */}
+                            <div className="flex items-center gap-2 pt-1">
+                              {cleanText && (
+                                <button
+                                  onClick={() => handleCopyFullResponse(cleanText, i)}
+                                  className="text-[11px] text-slate-400 hover:text-emerald-400 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1.5"
+                                >
+                                  <span>📋</span>
+                                  <span>{copiedMsgIndex === i ? '已複製全部' : '複製全部回應'}</span>
+                                </button>
+                              )}
+
+                              {i === currentChat.messages.length - 1 && !isSending && (
                                 <button
                                   onClick={handleRegenerate}
                                   className="text-[11px] text-slate-400 hover:text-indigo-400 bg-slate-900 hover:bg-slate-800 border border-slate-800 px-2.5 py-1 rounded-lg transition-colors flex items-center gap-1.5"
@@ -1324,8 +1380,8 @@ CREATE TABLE conversations (
                                   <span>🔄</span>
                                   <span>重新生成回應</span>
                                 </button>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </div>
                         )}
                       </div>
