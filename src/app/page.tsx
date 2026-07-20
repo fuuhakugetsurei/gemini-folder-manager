@@ -919,7 +919,7 @@ export default function Home() {
                     const urlRegex = /\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/;
                     const match = msg.content.match(urlRegex);
                     const cleanText = msg.content.replace(urlRegex, '').trim();
-
+ 
                     return (
                       <div key={i} id={`message-node-${i}`} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                         {msg.role === 'user' ? (
