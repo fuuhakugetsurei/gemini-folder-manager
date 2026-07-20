@@ -82,7 +82,7 @@ export default function Home() {
   const [draggedChatId, setDraggedChatId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
-  // 模型切換狀態（預設 Gemini: gemini-3.5-flash / GitHub: gpt-4.1-mini）
+  // 模型切換狀態
   const [selectedGeminiModel, setSelectedGeminiModel] = useState('gemini-3.5-flash');
   const [selectedGithubModel, setSelectedGithubModel] = useState('gpt-4.1-mini');
   
@@ -101,7 +101,7 @@ export default function Home() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isFeaturesMenuOpen, setIsFeaturesMenuOpen] = useState(false);
   
-  // 📥 匯入控制艙與用戶引導彈窗狀態 (完美保留)
+  // 📥 匯入控制艙與用戶引導彈窗狀態
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [importedFileName, setImportedFileName] = useState<string | null>(null);
   const [parsedMessages, setParsedMessages] = useState<{ role: string; content: string }[]>([]);
@@ -349,7 +349,6 @@ export default function Home() {
     }
   };
 
-  // 📄 Markdown 歷史對話匯入解析邏輯
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -515,7 +514,6 @@ export default function Home() {
           await sleep(retryDelay);
           retryDelay *= 2;
         } else {
-          // Gemini 重試無果，若有填寫 GitHub Token，則執行全自動降級 Failover
           if (githubToken) {
             console.warn("⚠️ Gemini API 塞車，全自動切換至 GitHub Models 備援備份！");
             return await callGitHubModels(targetMessages);
@@ -700,7 +698,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* ⚙️ 超級控制艙：整合多 Provider 提供商 + 輔助擴充功能選項 */}
+      {/* ⚙️ 超級控制艙 */}
       {isFeaturesMenuOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[90] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -712,7 +710,7 @@ export default function Home() {
               <button onClick={() => setIsFeaturesMenuOpen(false)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">關閉面板 ✕</button>
             </div>
 
-            {/* ✨ Provider 提供商選擇器 */}
+            {/* Provider 提供商選擇器 */}
             <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-2">
               <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">目前模型提供商 (Provider)</label>
               <select 
@@ -725,7 +723,7 @@ export default function Home() {
               </select>
             </div>
 
-            {/* ✨ 動態渲染不同 Provider 的 Key 與模型選擇 */}
+            {/* 動態渲染不同 Provider 的 Key 與模型選擇 */}
             {selectedProvider === 'gemini' ? (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -760,7 +758,7 @@ export default function Home() {
               </div>
             )}
 
-            {/* 🔥 保留全部舊版的「其他輔助功能組件」 */}
+            {/* ✨ 更新文案後的輔助功能選單 */}
             <div className="grid grid-cols-1 gap-2.5 pt-1">
               <button
                 onClick={() => { setIsImportModalOpen(true); setIsFeaturesMenuOpen(false); }}
@@ -779,8 +777,8 @@ export default function Home() {
               >
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🔑</span>
                 <div>
-                  <p className="text-xs font-semibold text-slate-200">如何取得免費 API Key？</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">圖文引導你前往 Google AI Studio 申請專屬金鑰</p>
+                  <p className="text-xs font-semibold text-slate-200">如何取得免費 API Key / PAT？</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">引導前往 Google AI Studio 與 GitHub 申請專屬憑證</p>
                 </div>
               </button>
 
@@ -790,8 +788,8 @@ export default function Home() {
               >
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🖼️</span>
                 <div>
-                  <p className="text-xs font-semibold text-slate-200">圖片傳輸與壓縮說明</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">了解系統如何自動壓縮圖片以大幅加快傳輸速度</p>
+                  <p className="text-xs font-semibold text-slate-200">圖片前端自動壓縮說明</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">了解系統如何全自動壓縮圖片以達到 0.5 秒極速傳輸</p>
                 </div>
               </button>
             </div>
@@ -799,7 +797,7 @@ export default function Home() {
         </div>
       )}
 
-      {/* 📥 二級嵌套視窗：Markdown 檔案上傳解構艙 (完整保留) */}
+      {/* 📥 歷史對話匯入 Modal */}
       {isImportModalOpen && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-lg bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
@@ -865,15 +863,15 @@ export default function Home() {
         </div>
       )}
 
-      {/* 💡 二級靜態用戶引導控制艙 (完整保留) */}
+      {/* 💡 ✨ 最新升級：二級靜態用戶引導控制艙 */}
       {activeGuide && (
         <div className="fixed inset-0 bg-slate-950/80 backdrop-blur-md z-[100] flex items-center justify-center p-4 animate-fade-in" onClick={(e) => e.stopPropagation()}>
           <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
-                <span className="text-xl">{activeGuide === 'api' ? '🔑' : '🖼️'}</span>
+                <span className="text-xl">{activeGuide === 'api' ? '🔑' : '⚡'}</span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">
-                  {activeGuide === 'api' ? 'Google AI Studio 密鑰指南' : '圖片傳輸與壓縮說明'}
+                  {activeGuide === 'api' ? '雙模型憑證 (Key / PAT) 申請指南' : '前端全自動圖片壓縮說明'}
                 </h3>
               </div>
               <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
@@ -881,23 +879,40 @@ export default function Home() {
               </button>
             </div>
 
-            <div className="text-xs text-slate-300 leading-relaxed space-y-3 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
+            <div className="text-xs text-slate-300 leading-relaxed space-y-4 max-h-80 overflow-y-auto pr-1 scrollbar-none font-sans">
               {activeGuide === 'api' ? (
                 <>
-                  <p className="font-semibold text-indigo-400">只需三步，即可取得終身免費的 Gemini 核心金鑰：</p>
-                  <ol className="list-decimal pl-4 space-y-2 text-slate-400">
-                    <li>點擊前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官方網站</a> 並使用任意 Google 帳號登入。</li>
-                    <li>點擊左上角的 "Get API key" 按鈕。</li>
-                    <li>點擊 "Create API key"，建立成功後將其複製，並貼回我們工作區左側的密鑰輸入框內即可！</li>
-                  </ol>
+                  <div className="space-y-2 border-b border-slate-800 pb-3">
+                    <p className="font-semibold text-indigo-400 flex items-center gap-1.5">
+                      <span>⚡ 1. Google AI Studio Key (Gemini 原生)</span>
+                    </p>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
+                      <li>前往 <a href="https://aistudio.google.com/" target="_blank" rel="noreferrer" className="text-indigo-400 underline font-semibold hover:text-indigo-300">Google AI Studio 官網</a>。</li>
+                      <li>點擊 "Get API key" $\rightarrow$ "Create API key"。</li>
+                      <li>複製生成的 Key 貼入本站 Gemini 金鑰欄。</li>
+                    </ol>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="font-semibold text-emerald-400 flex items-center gap-1.5">
+                      <span>🐙 2. GitHub Personal Access Token (GitHub Models 備援)</span>
+                    </p>
+                    <ol className="list-decimal pl-4 space-y-1.5 text-slate-400 text-[11px]">
+                      <li>前往 GitHub Settings $\rightarrow$ Developer Settings $\rightarrow$ Personal Access Tokens $\rightarrow$ Fine-grained tokens。</li>
+                      <li>點擊 "Generate new token"，名稱隨意（如 `GitHub Models`）。</li>
+                      <li>在 <b>Account permissions</b> 區塊下找到 <b>Models</b>，務必將權限設為 <b>Read-only</b>。</li>
+                      <li>點擊生成後，複製 `github_pat_...` 貼入 GitHub PAT 欄。</li>
+                    </ol>
+                  </div>
                 </>
               ) : (
                 <>
-                  <p className="font-semibold text-emerald-400">本系統已內建 HTML5 Canvas 前端自動壓縮技術：</p>
-                  <ul className="list-disc pl-4 space-y-2 text-slate-400">
-                    <li><span className="text-slate-200 font-semibold">自動降頻壓縮</span>：不論相片原始體積多大，上傳時皆會自動等比縮放至最大 1920px 並轉為高畫質 75% JPEG，體積暴降 80%~90%。</li>
-                    <li><span className="text-slate-200 font-semibold">極速直推</span>：體積大幅減少後，上傳至 Supabase Storage CDN 的時間可縮短至 0.5 秒內。</li>
-                  </ul>
+                  <p className="font-semibold text-emerald-400">✨ 本系統已全面升級為「全自動 Canvas 前端即時壓縮」：</p>
+                  <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-400">
+                    <p><span className="text-slate-200 font-semibold">零手動干預</span>：選擇任何相片（包含 4K 原圖或幾十 MB 照片），系統會在背景自動以 HTML5 Canvas 處理。</p>
+                    <p><span className="text-slate-200 font-semibold">智慧降頻</span>：最大寬高自動鎖定 1920px、品質設為 75% 高清 JPEG，體積瞬間暴降 80%~90%（降至 200KB~400KB 左右）。</p>
+                    <p><span className="text-slate-200 font-semibold">極速上傳</span>：體積縮小後，推送至 Supabase Storage CDN 只需 0.5 秒，且完美繞過資料庫 4MB 上傳限制與 RLS 異常！</p>
+                  </div>
                 </>
               )}
             </div>
@@ -1184,7 +1199,7 @@ export default function Home() {
                 {attachedImageUrl && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已壓縮上傳</span>
+                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已極速壓縮上傳</span>
                     <button type="button" onClick={() => setAttachedImageUrl(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
@@ -1203,7 +1218,7 @@ export default function Home() {
                     <input type="file" accept="image/*,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!activeHasCredentials || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={activeHasCredentials ? "輸入訊息或發送數學物理公式..." : "請先填入專屬 Key 憑證！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!activeHasCredentials || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <input type="text" placeholder={activeHasCredentials ? "輸入訊息或發送數學物理公式..." : "請先填入專屬 Key / PAT 憑證！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!activeHasCredentials || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
                   <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedFileContent) || isSending || !activeHasCredentials || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
