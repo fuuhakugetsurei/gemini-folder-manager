@@ -922,7 +922,7 @@ export default function Home() {
     <option value="gemini-3.5-flash">Gemini 3.5 Flash (極速預設)</option>
     <option value="gemini-3.5-pro">Gemini 3.5 Pro (專家推理)</option>
     <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (超輕量·避開503備援)</option>
-    <option value="gemini-3-flash">Gemini 3 Flash (標準 3 系列核心)</option>
+    <option value="gemini-3-flash-preview">Gemini 3 Flash (預覽 3 系列核心)</option>
   </select>
 </div>
 
