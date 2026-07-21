@@ -88,6 +88,9 @@ export default function Home() {
   const [customSupabaseUrl, setCustomSupabaseUrl] = useState('');
   const [customSupabaseAnonKey, setCustomSupabaseAnonKey] = useState('');
 
+  // 📱 行動端裝置動態偵測狀態
+  const [isMobile, setIsMobile] = useState(false);
+
   // 核心資料狀態
   const [folders, setFolders] = useState<Folder[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -178,6 +181,13 @@ export default function Home() {
   };
 
   useEffect(() => {
+    // 📱 動態監聽是否為行動端裝置
+    const checkMobile = () => {
+      setIsMobile(window.innerWidth < 768 || 'ontouchstart' in window);
+    };
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+
     const savedStorageMode = localStorage.getItem('supabase_storage_mode') as 'default' | 'custom';
     if (savedStorageMode) setStorageMode(savedStorageMode);
 
@@ -235,7 +245,11 @@ export default function Home() {
         setIsVerified(null);
       }
     });
-    return () => subscription.unsubscribe();
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('resize', checkMobile);
+    };
   }, [storageMode, customSupabaseUrl, customSupabaseAnonKey]);
 
   useEffect(() => {
@@ -582,7 +596,7 @@ export default function Home() {
     setIsSending(false);
   };
 
-  // 🌐 GitHub Models API 呼叫器（支援 Signal 訊號控管）
+  // 🌐 GitHub Models API 呼叫器
   const callGitHubModels = async (targetMessages: { role: string; content: string }[], signal?: AbortSignal) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
@@ -615,7 +629,7 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（GitHub Models 未能取得回應）';
   };
 
-  // ⚡ Groq Cloud API 呼叫器（支援 Signal 訊號控管）
+  // ⚡ Groq Cloud API 呼叫器
   const callGroqAPI = async (targetMessages: { role: string; content: string }[], signal?: AbortSignal) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
@@ -747,7 +761,6 @@ export default function Home() {
     setApiErrorStatus(null);
     const chatId = currentChat.id;
 
-    // 初始化 AbortController 供終止
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
@@ -827,7 +840,6 @@ export default function Home() {
     setAttachedFileContent(null); 
     setAttachedFileName(null);
 
-    // 重置 Textarea 高度
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
@@ -835,9 +847,10 @@ export default function Home() {
     await executeSendMessage(updatedMessages, pdfBase64Temp);
   };
 
-  // ⌨️ 處理 Enter (發送) 與 Shift + Enter (換行)
+  // ⌨️ ✨ 關鍵修復：區分手機端與電腦端的 Enter / Shift+Enter 換行邏輯
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    // 只有在非手機裝置（電腦端）且沒按 Shift 的情況下，按 Enter 才會直接發送
+    if (!isMobile && e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
     }
@@ -1567,7 +1580,7 @@ CREATE TABLE conversations (
               </aside>
             </div>
 
-            {/* ✨ 輸入欄（支援自動高動多行 Textarea 與 🛑 停止生成） */}
+            {/* 輸入欄 */}
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
                 {isUploadingImage && (
@@ -1608,19 +1621,23 @@ CREATE TABLE conversations (
                     <input type="file" accept="image/*,application/pdf,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!activeHasCredentials || isSending || isUploadingImage} />
                   </label>
 
-                  {/* ⌨️ 升級：智慧型多行動態高 Textarea */}
+                  {/* ⌨️ 手機/電腦動態適應 Textarea */}
                   <textarea
                     ref={textareaRef}
                     value={inputMessage}
                     onChange={(e) => setInputMessage(e.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
-                    placeholder={activeHasCredentials ? "輸入訊息...（Enter 發送，Shift+Enter 換行）" : "請先填入專屬 Key / PAT 憑證！"}
+                    placeholder={
+                      activeHasCredentials 
+                        ? (isMobile ? "輸入訊息..." : "輸入訊息...（Enter 發送，Shift+Enter 換行）") 
+                        : "請先填入專屬 Key / PAT 憑證！"
+                    }
                     disabled={!activeHasCredentials || isSending || isUploadingImage}
                     className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 md:px-4 md:py-2.5 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40 resize-none max-h-40 scrollbar-none leading-relaxed"
                   />
 
-                  {/* 🛑 升級：AI 正在生成時，按鈕切換為「停止生成」 */}
+                  {/* 🛑 正在生成時可隨時中斷 */}
                   {isSending ? (
                     <button
                       type="button"
