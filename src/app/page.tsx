@@ -980,7 +980,7 @@ export default function Home() {
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash (極速預設)</option>
                     <option value="gemini-3.5-pro">Gemini 3.5 Pro (專家推理)</option>
                     <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (超輕量·避開503備援)</option>
-                    <option value="gemini-3-flash">Gemini 3 Flash (標準 3 系列核心)</option>
+                    <option value="gemini-3-flash-preview">Gemini 3 Flash (預覽 3 系列核心)</option>
                   </select>
                 </div>
               </div>
@@ -1000,7 +1000,7 @@ export default function Home() {
                     <option value="gpt-4.1-nano">OpenAI gpt-4.1-nano (超低延遲)</option>
                     <option value="gpt-4o-mini">OpenAI gpt-4o-mini (經典輕量)</option>
                     <option value="gpt-4o">OpenAI gpt-4o (全能高階)</option>
-                    <option value="meta-llama-3.3-70b-instruct">Meta Llama-3.3-70b</option>
+                    <option value="llama-3.3-70b-instruct">Meta Llama-3.3-70b</option>
                   </select>
                 </div>
               </div>
