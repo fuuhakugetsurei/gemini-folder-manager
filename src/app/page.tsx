@@ -138,12 +138,15 @@ export default function Home() {
   const [inviteCodeInput, setInviteCodeInput] = useState('');
   const [verifying, setVerifying] = useState(false);
 
-  // 📄/🖼️ 雲端圖片、PDF 與本地檔案暫存狀態
+  // 🖼️ 雲端圖片狀態（走 Supabase Storage）
   const [attachedImageUrl, setAttachedImageUrl] = useState<string | null>(null);
-  const [attachedPdfUrl, setAttachedPdfUrl] = useState<string | null>(null);
-  const [attachedPdfName, setAttachedPdfName] = useState<string | null>(null);
-  const [isUploadingFile, setIsUploadingFile] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
+  // 📕 本地 PDF 暫存狀態（零雲端 Storage 消耗）
+  const [attachedPdfBase64, setAttachedPdfBase64] = useState<string | null>(null);
+  const [attachedPdfName, setAttachedPdfName] = useState<string | null>(null);
+
+  // 💻 本地代碼/文字檔暫存狀態（零雲端 Storage 消耗）
   const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
 
@@ -314,7 +317,7 @@ export default function Home() {
     }
   };
 
-  // 🚀 萬用附件處理：支援圖片自動壓縮、PDF 上傳、程式碼檔零雲端暫存（不塞爆輸入框）
+  // 🚀 附件處理分流（圖片走雲端，PDF/代碼走本地異步讀取不推 Supabase Storage）
   const handleUniversalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -323,15 +326,15 @@ export default function Home() {
     const fileType = file.type;
     const isPdf = fileType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
-    // 清除過往暫存狀態
+    // 清空舊暫存狀態
     setAttachedImageUrl(null);
-    setAttachedPdfUrl(null);
+    setAttachedPdfBase64(null);
     setAttachedPdfName(null);
     setAttachedFileContent(null);
     setAttachedFileName(null);
 
     if (fileType.startsWith('image/')) {
-      setIsUploadingFile(true);
+      setIsUploadingImage(true);
       try {
         const compressedBlob = await compressImage(file, 1920, 1920, 0.75);
         const fileName = `${user.id}/${Date.now()}.jpg`;
@@ -347,29 +350,26 @@ export default function Home() {
       } catch (err: any) {
         alert(`圖片上傳失敗: ${err.message}`);
       } finally {
-        setIsUploadingFile(false);
+        setIsUploadingImage(false);
       }
     } else if (isPdf) {
+      // ⚡ PDF 走本地零雲端讀取流 (FileReader -> Base64)
       if (file.size > 10 * 1024 * 1024) return alert('PDF 檔案大小超過 10MB 限制！');
-      setIsUploadingFile(true);
-      try {
-        const fileName = `${user.id}/${Date.now()}_${file.name}`;
-        const { error } = await db.storage
-          .from('images')
-          .upload(fileName, file, { contentType: 'application/pdf', cacheControl: '3600', upsert: true });
+      setAttachedPdfName(file.name);
 
-        if (error) throw error;
-
-        const { data: { publicUrl } } = db.storage.from('images').getPublicUrl(fileName);
-        setAttachedPdfUrl(publicUrl);
-        setAttachedPdfName(file.name);
-      } catch (err: any) {
-        alert(`PDF 上傳失敗: ${err.message}`);
-      } finally {
-        setIsUploadingFile(false);
-      }
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const buffer = event.target?.result as ArrayBuffer;
+        if (buffer) {
+          const base64String = btoa(
+            new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+          );
+          setAttachedPdfBase64(base64String);
+        }
+      };
+      reader.readAsArrayBuffer(file);
     } else {
-      // 程式碼與純文字檔：本地 FileReader 異步讀取，只暫存於 State，絕對不塞入 inputMessage 文字框
+      // 💻 程式碼 / 文字檔：走本地異步讀取流 (不打入 textarea 輸入框)
       if (file.size > 4 * 1024 * 1024) return alert('檔案大小超過 4MB 限制！');
       setAttachedFileName(file.name);
       const reader = new FileReader();
@@ -629,8 +629,11 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（Groq 未能取得回應）';
   };
 
-  // 🚀 Gemini API 呼叫器（完整支援圖片與 PDF inlineData 原生解析）
-  const callGeminiWithRetry = async (targetMessages: { role: string; content: string }[]) => {
+  // 🚀 Gemini API 呼叫器（支援本地 PDF Base64 與雲端圖片串流）
+  const callGeminiWithRetry = async (
+    targetMessages: { role: string; content: string }[],
+    latestPdfBase64: string | null = null
+  ) => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
     const contents = await Promise.all(targetMessages.map(async (msg, index) => {
@@ -638,21 +641,20 @@ export default function Home() {
 
       const text = msg.content;
       const imgMatch = text.match(/\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/);
-      const pdfMatch = text.match(/\[PDF_URL:(https:\/\/[\s\S]+?)\|([\s\S]+?)\]/);
 
       const parts: any[] = [];
       const isLatestMessage = index === targetMessages.length - 1;
 
-      // 乾淨擷取純 Prompt 文字
+      // 提取乾淨純文字
       let cleanText = text
         .replace(/\[IMAGE_URL:[\s\S]+?\]/g, '')
-        .replace(/\[PDF_URL:[\s\S]+?\]/g, '')
         .trim();
 
       if (cleanText) parts.push({ text: cleanText });
 
-      // 僅最新對話進行多模態二進位轉換，減少對話歷史 Token 消耗
+      // 最新發送的訊息才帶入多模態流
       if (isLatestMessage) {
+        // 圖片：下載 CDN 轉 Base64
         if (imgMatch) {
           try {
             const imageResp = await fetch(imgMatch[1]);
@@ -665,16 +667,14 @@ export default function Home() {
           }
         }
 
-        if (pdfMatch) {
-          try {
-            const pdfResp = await fetch(pdfMatch[1]);
-            const blob = await pdfResp.blob();
-            const buffer = await blob.arrayBuffer();
-            const base64String = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
-            parts.push({ inlineData: { data: base64String, mimeType: "application/pdf" } });
-          } catch (fetchErr) {
-            console.error("PDF 抓取轉換失敗:", fetchErr);
-          }
+        // ⚡ PDF：直接使用本地讀取的 Base64 數據流（免推 Storage CDN）
+        if (latestPdfBase64) {
+          parts.push({
+            inlineData: {
+              data: latestPdfBase64,
+              mimeType: "application/pdf"
+            }
+          });
         }
       }
 
@@ -717,7 +717,10 @@ export default function Home() {
   };
 
   // 🚀 核心訊息處理中樞
-  const executeSendMessage = async (targetMessages: { role: string; content: string }[]) => {
+  const executeSendMessage = async (
+    targetMessages: { role: string; content: string }[],
+    latestPdfBase64: string | null = null
+  ) => {
     if (!currentChat) return;
     
     setIsSending(true);
@@ -735,7 +738,7 @@ export default function Home() {
         modelResponseText = await callGroqAPI(targetMessages);
       } else {
         if (!apiKey) throw new Error('請先在設定中填入 Gemini API Key！');
-        modelResponseText = await callGeminiWithRetry(targetMessages);
+        modelResponseText = await callGeminiWithRetry(targetMessages, latestPdfBase64);
       }
 
       const finalMessages = [...targetMessages, { role: 'model', content: modelResponseText }];
@@ -762,18 +765,19 @@ export default function Home() {
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     const hasCredentials = selectedProvider === 'github' ? !!githubToken : (selectedProvider === 'groq' ? !!groqApiKey : !!apiKey);
-    if ((!inputMessage.trim() && !attachedImageUrl && !attachedPdfUrl && !attachedFileContent) || !currentChat || !hasCredentials || isSending) return;
+    if ((!inputMessage.trim() && !attachedImageUrl && !attachedPdfBase64 && !attachedFileContent) || !currentChat || !hasCredentials || isSending) return;
 
     let finalContent = inputMessage.trim();
+    const pdfBase64Temp = attachedPdfBase64; // 暫存發送給 Gemini API
 
-    // 將附件參照標籤附接在訊息末端（不影響 UI 簡潔）
+    // 格式化訊息顯示（落盤至 Supabase DB 的純文字標籤）
     if (attachedImageUrl) {
       finalContent = `${finalContent}\n\n[IMAGE_URL:${attachedImageUrl}]`;
-    } else if (attachedPdfUrl && attachedPdfName) {
-      finalContent = `${finalContent}\n\n[PDF_URL:${attachedPdfUrl}|${attachedPdfName}]`;
+    } else if (attachedPdfName) {
+      finalContent = `${finalContent}\n\n📁 **附帶 PDF 文件: ${attachedPdfName}**`;
     } else if (attachedFileContent && attachedFileName) {
       const fileExt = attachedFileName.split('.').pop() || 'txt';
-      finalContent = `${finalContent}\n\n[ATTACHED_CODE:${attachedFileName}|${fileExt}]\n\`\`\`${fileExt}\n${attachedFileContent}\n\`\`\``;
+      finalContent = `${finalContent}\n\n📁 **附帶檔案: ${attachedFileName}**\n\`\`\`${fileExt}\n${attachedFileContent}\n\`\`\``;
     }
 
     const userMessage = { role: 'user', content: finalContent };
@@ -790,12 +794,12 @@ export default function Home() {
     setConversations(prev => prev.map(c => c.id === currentChat.id ? nextChatState : c));
     setInputMessage('');
     setAttachedImageUrl(null); 
-    setAttachedPdfUrl(null);
+    setAttachedPdfBase64(null);
     setAttachedPdfName(null);
     setAttachedFileContent(null); 
     setAttachedFileName(null);
 
-    await executeSendMessage(updatedMessages);
+    await executeSendMessage(updatedMessages, pdfBase64Temp);
   };
 
   const handleRegenerate = async () => {
@@ -964,7 +968,6 @@ export default function Home() {
               </select>
             </div>
 
-            {/* Gemini 模型區塊（含 3.5 與 3.1 系列） */}
             {selectedProvider === 'gemini' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -1049,8 +1052,8 @@ export default function Home() {
               >
                 <span className="text-xl bg-slate-900 p-2 rounded-lg group-hover:bg-indigo-600/20 group-hover:text-indigo-400 transition-colors">🖼️</span>
                 <div>
-                  <p className="text-xs font-semibold text-slate-200">圖片前端自動壓縮說明</p>
-                  <p className="text-[10px] text-slate-500 mt-0.5">了解系統如何全自動壓縮圖片以達到 0.5 秒極速傳輸</p>
+                  <p className="text-xs font-semibold text-slate-200">圖片與檔案傳輸架構說明</p>
+                  <p className="text-[10px] text-slate-500 mt-0.5">了解圖片直推 CDN 與 PDF/代碼本地零消耗讀取機制</p>
                 </div>
               </button>
             </div>
@@ -1134,7 +1137,7 @@ export default function Home() {
                   {activeGuide === 'api' ? '🔑' : (activeGuide === 'db' ? '☁️' : '⚡')}
                 </span>
                 <h3 className="font-bold text-sm md:text-base text-slate-200">
-                  {activeGuide === 'api' ? '三模型憑證 (Key / PAT) 申請指南' : (activeGuide === 'db' ? '個人 Supabase 庫建置 SQL 指南' : '前端全自動圖片壓縮說明')}
+                  {activeGuide === 'api' ? '三模型憑證 (Key / PAT) 申請指南' : (activeGuide === 'db' ? '個人 Supabase 庫建置 SQL 指南' : '圖片與檔案極速分流架構說明')}
                 </h3>
               </div>
               <button onClick={() => { setActiveGuide(null); setIsFeaturesMenuOpen(true); }} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-2 py-1 rounded">
@@ -1184,11 +1187,10 @@ CREATE TABLE conversations (
                 </>
               ) : (
                 <>
-                  <p className="font-semibold text-emerald-400">✨ 本系統已全面升級為「全自動 Canvas 前端即時壓縮」：</p>
+                  <p className="font-semibold text-emerald-400">✨ 本系統已全面實施附件智慧雙流分流：</p>
                   <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 space-y-2 text-[11px] text-slate-400">
-                    <p><span className="text-slate-200 font-semibold">零手動干預</span>：選擇任何相片，系統會在背景自動以 HTML5 Canvas 處理。</p>
-                    <p><span className="text-slate-200 font-semibold">智慧降頻</span>：最大寬高自動鎖定 1920px、品質設為 75% 高清 JPEG，體積暴降 80%~90%。</p>
-                    <p><span className="text-slate-200 font-semibold">極速上傳</span>：推送至 Supabase Storage CDN 只需 0.5 秒，且完美繞過 4MB 限制與 RLS 異常！</p>
+                    <p><span className="text-slate-200 font-semibold">🖼️ 圖片直推雲端</span>：圖片經由 Canvas 前端壓縮至 1920px 後，直推 Supabase Storage 生成 CDN 網址，確保畫面渲染不佔用 Prompt 空間。</p>
+                    <p><span className="text-slate-200 font-semibold">📕 PDF / 程式碼零雲端消耗</span>：PDF 文件與代碼檔（.py, .cpp, .txt）走本地 FileReader 異步讀取，**完全不推上 Storage**，極速零延遲，同時極大化保護你的雲端額度！</p>
                   </div>
                 </>
               )}
@@ -1399,14 +1401,10 @@ CREATE TABLE conversations (
                   currentChat.messages.map((msg, i) => {
                     // 解析附件標籤
                     const imgMatch = msg.content.match(/\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/);
-                    const pdfMatch = msg.content.match(/\[PDF_URL:(https:\/\/[\s\S]+?)\|([\s\S]+?)\]/);
-                    const codeMatch = msg.content.match(/\[ATTACHED_CODE:([\s\S]+?)\|([\s\S]+?)\]/);
 
-                    // 清理出顯示給使用者的純 Prompt 文字
+                    // 清理出純 Prompt 文字
                     const cleanText = msg.content
                       .replace(/\[IMAGE_URL:[\s\S]+?\]/g, '')
-                      .replace(/\[PDF_URL:[\s\S]+?\]/g, '')
-                      .replace(/\[ATTACHED_CODE:[\s\S]+?\]/g, '')
                       .trim();
 
                     return (
@@ -1428,28 +1426,10 @@ CREATE TABLE conversations (
                               </div>
                             ) : (
                               <>
-                                {/* 🖼️ 圖片預覽卡片 */}
+                                {/* 🖼️ 雲端圖片預覽卡片 */}
                                 {imgMatch && (
                                   <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
                                     <img src={imgMatch[1]} alt="雲端圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
-                                  </div>
-                                )}
-
-                                {/* 📄 PDF 文件卡片 */}
-                                {pdfMatch && (
-                                  <div className="mb-2 flex items-center gap-2.5 bg-slate-950/60 p-2.5 rounded-lg border border-slate-700/60 max-w-xs">
-                                    <span className="text-2xl">📕</span>
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-semibold text-slate-200 truncate">{pdfMatch[2]}</p>
-                                      <a href={pdfMatch[1]} target="_blank" rel="noreferrer" className="text-[10px] text-indigo-400 hover:underline">點此開啟 PDF 原檔 ↗</a>
-                                    </div>
-                                  </div>
-                                )}
-
-                                {/* 💻 附帶程式碼/文字檔頂欄標籤 */}
-                                {codeMatch && (
-                                  <div className="mb-2 flex items-center gap-2 bg-slate-950/60 px-2.5 py-1.5 rounded-md border border-slate-700/60 text-xs font-mono text-amber-300">
-                                    <span>📁 附帶檔案: {codeMatch[1]}</span>
                                   </div>
                                 )}
 
@@ -1512,7 +1492,7 @@ CREATE TABLE conversations (
                 {isSending && (
                   <div className="flex justify-start">
                     <div className="text-slate-400 text-xs md:text-sm animate-pulse flex items-center gap-2">
-                      <span>✨ AI 正在解構上下文、附件與算式 ({selectedProvider === 'github' ? 'GitHub Models' : (selectedProvider === 'groq' ? 'Groq LPU' : 'Gemini Core')})...</span>
+                      <span>✨ AI 正在解構上下文與附件 ({selectedProvider === 'github' ? 'GitHub Models' : (selectedProvider === 'groq' ? 'Groq LPU' : 'Gemini Core')})...</span>
                     </div>
                   </div>
                 )}
@@ -1536,8 +1516,6 @@ CREATE TABLE conversations (
                   if (msg.role !== 'user') return null;
                   const previewText = msg.content
                     .replace(/\[IMAGE_URL:.*\]/g, '')
-                    .replace(/\[PDF_URL:.*\]/g, '')
-                    .replace(/\[ATTACHED_CODE:.*\]/g, '')
                     .slice(0, 15) || '檔案或問題';
                   return (
                     <button
@@ -1554,32 +1532,32 @@ CREATE TABLE conversations (
             {/* 輸入欄 */}
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
-                {isUploadingFile && (
+                {isUploadingImage && (
                   <div className="text-xs text-indigo-400 animate-pulse bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
-                    ⏳ 正在處理附件並推送至 Supabase Storage...
+                    ⏳ 正在壓縮圖片並推送至 Supabase Storage...
                   </div>
                 )}
 
-                {/* 🖼️ 圖片預覽卡片 */}
+                {/* 🖼️ 雲端圖片預覽卡片 */}
                 {attachedImageUrl && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
-                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已極速壓縮上傳</span>
+                    <span className="text-[10px] md:text-[11px] text-emerald-400">✓ 圖片已極速壓縮上傳 CDN</span>
                     <button type="button" onClick={() => setAttachedImageUrl(null)} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
 
-                {/* 📄 PDF 檔案暫存預覽卡片 */}
-                {attachedPdfUrl && (
+                {/* 📕 本地 PDF 暫存卡片（零雲端消耗） */}
+                {attachedPdfName && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <span className="text-lg">📕</span>
                     <span className="text-[10px] md:text-[11px] text-emerald-400 font-mono truncate max-w-[180px]">{attachedPdfName}</span>
-                    <span className="text-[9px] text-slate-500">（已同步至 CDN）</span>
-                    <button type="button" onClick={() => { setAttachedPdfUrl(null); setAttachedPdfName(null); }} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
+                    <span className="text-[9px] text-slate-500">（本地極速合流·免雲端空間）</span>
+                    <button type="button" onClick={() => { setAttachedPdfBase64(null); setAttachedPdfName(null); }} className="text-xs text-rose-400 hover:underline ml-2">取消</button>
                   </div>
                 )}
 
-                {/* 💻 本地代碼/文字檔暫存預覽卡片 (極簡乾淨，不進入 textarea) */}
+                {/* 💻 本地代碼/文字檔暫存卡片（零雲端消耗，不打入 textarea） */}
                 {attachedFileName && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <span className="text-lg">📄</span>
@@ -1590,13 +1568,13 @@ CREATE TABLE conversations (
                 )}
 
                 <div className="flex gap-2 items-center">
-                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶相片, PDF 或 代碼/文字檔">
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶相片(走雲端) 或 PDF/代碼/文字檔(走本地免雲端額度)">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
-                    <input type="file" accept="image/*,application/pdf,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!activeHasCredentials || isSending || isUploadingFile} />
+                    <input type="file" accept="image/*,application/pdf,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!activeHasCredentials || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={activeHasCredentials ? "輸入訊息或發送問題..." : "請先填入專屬 Key / PAT 憑證！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!activeHasCredentials || isSending || isUploadingFile} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedPdfUrl && !attachedFileContent) || isSending || !activeHasCredentials || isUploadingFile} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                  <input type="text" placeholder={activeHasCredentials ? "輸入訊息或發送問題..." : "請先填入專屬 Key / PAT 憑證！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!activeHasCredentials || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
+                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedPdfBase64 && !attachedFileContent) || isSending || !activeHasCredentials || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
                 </div>
               </div>
             </form>
