@@ -107,6 +107,10 @@ export default function Home() {
   const [isSending, setIsSending] = useState(false);
   const [apiErrorStatus, setApiErrorStatus] = useState<string | null>(null);
 
+  // 🛑 存取用於取消請求的 AbortController
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
   // 📋 複製整篇訊息的反饋狀態
   const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
 
@@ -142,11 +146,11 @@ export default function Home() {
   const [attachedImageUrl, setAttachedImageUrl] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
 
-  // 📕 本地 PDF 暫存狀態（零雲端 Storage 消耗）
+  // 📕 本地 PDF 暫存狀態
   const [attachedPdfBase64, setAttachedPdfBase64] = useState<string | null>(null);
   const [attachedPdfName, setAttachedPdfName] = useState<string | null>(null);
 
-  // 💻 本地代碼/文字檔暫存狀態（零雲端 Storage 消耗）
+  // 💻 本地代碼/文字檔暫存狀態
   const [attachedFileContent, setAttachedFileContent] = useState<string | null>(null);
   const [attachedFileName, setAttachedFileName] = useState<string | null>(null);
 
@@ -238,6 +242,14 @@ export default function Home() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   }, [currentChat?.messages]);
 
+  // 動態調整 Textarea 高度
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 160)}px`;
+    }
+  }, [inputMessage]);
+
   const saveStorageMode = (mode: 'default' | 'custom') => {
     setStorageMode(mode);
     localStorage.setItem('supabase_storage_mode', mode);
@@ -317,7 +329,6 @@ export default function Home() {
     }
   };
 
-  // 🚀 附件處理分流（圖片走雲端，PDF/代碼走本地異步讀取不推 Supabase Storage）
   const handleUniversalFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -326,7 +337,6 @@ export default function Home() {
     const fileType = file.type;
     const isPdf = fileType === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
 
-    // 清空舊暫存狀態
     setAttachedImageUrl(null);
     setAttachedPdfBase64(null);
     setAttachedPdfName(null);
@@ -353,7 +363,6 @@ export default function Home() {
         setIsUploadingImage(false);
       }
     } else if (isPdf) {
-      // ⚡ PDF 走本地零雲端讀取流 (FileReader -> Base64)
       if (file.size > 10 * 1024 * 1024) return alert('PDF 檔案大小超過 10MB 限制！');
       setAttachedPdfName(file.name);
 
@@ -369,7 +378,6 @@ export default function Home() {
       };
       reader.readAsArrayBuffer(file);
     } else {
-      // 💻 程式碼 / 文字檔：走本地異步讀取流 (不打入 textarea 輸入框)
       if (file.size > 4 * 1024 * 1024) return alert('檔案大小超過 4MB 限制！');
       setAttachedFileName(file.name);
       const reader = new FileReader();
@@ -565,8 +573,17 @@ export default function Home() {
     }
   };
 
-  // 🌐 GitHub Models API 呼叫器
-  const callGitHubModels = async (targetMessages: { role: string; content: string }[]) => {
+  // 🛑 手動取消生成回應
+  const handleStopGenerating = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsSending(false);
+  };
+
+  // 🌐 GitHub Models API 呼叫器（支援 Signal 訊號控管）
+  const callGitHubModels = async (targetMessages: { role: string; content: string }[], signal?: AbortSignal) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
       content: msg.content
@@ -574,6 +591,7 @@ export default function Home() {
 
     const response = await fetch('https://models.inference.ai.azure.com/chat/completions', {
       method: 'POST',
+      signal: signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${githubToken}`
@@ -597,8 +615,8 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（GitHub Models 未能取得回應）';
   };
 
-  // ⚡ Groq Cloud API 呼叫器
-  const callGroqAPI = async (targetMessages: { role: string; content: string }[]) => {
+  // ⚡ Groq Cloud API 呼叫器（支援 Signal 訊號控管）
+  const callGroqAPI = async (targetMessages: { role: string; content: string }[], signal?: AbortSignal) => {
     const formattedMessages = targetMessages.map(msg => ({
       role: msg.role === 'model' ? 'assistant' : 'user',
       content: msg.content
@@ -606,6 +624,7 @@ export default function Home() {
 
     const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
+      signal: signal,
       headers: {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${groqApiKey}`
@@ -629,10 +648,11 @@ export default function Home() {
     return data.choices?.[0]?.message?.content || '（Groq 未能取得回應）';
   };
 
-  // 🚀 Gemini API 呼叫器（支援本地 PDF Base64 與雲端圖片串流）
+  // 🚀 Gemini API 呼叫器
   const callGeminiWithRetry = async (
     targetMessages: { role: string; content: string }[],
-    latestPdfBase64: string | null = null
+    latestPdfBase64: string | null = null,
+    signal?: AbortSignal
   ) => {
     const ai = new GoogleGenAI({ apiKey: apiKey });
 
@@ -645,19 +665,16 @@ export default function Home() {
       const parts: any[] = [];
       const isLatestMessage = index === targetMessages.length - 1;
 
-      // 提取乾淨純文字
       let cleanText = text
         .replace(/\[IMAGE_URL:[\s\S]+?\]/g, '')
         .trim();
 
       if (cleanText) parts.push({ text: cleanText });
 
-      // 最新發送的訊息才帶入多模態流
       if (isLatestMessage) {
-        // 圖片：下載 CDN 轉 Base64
         if (imgMatch) {
           try {
-            const imageResp = await fetch(imgMatch[1]);
+            const imageResp = await fetch(imgMatch[1], { signal });
             const blob = await imageResp.blob();
             const buffer = await blob.arrayBuffer();
             const base64String = btoa(new Uint8Array(buffer).reduce((data, byte) => data + String.fromCharCode(byte), ''));
@@ -667,7 +684,6 @@ export default function Home() {
           }
         }
 
-        // ⚡ PDF：直接使用本地讀取的 Base64 數據流（免推 Storage CDN）
         if (latestPdfBase64) {
           parts.push({
             inlineData: {
@@ -687,6 +703,8 @@ export default function Home() {
     let retryDelay = 1000;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      if (signal?.aborted) throw new Error('使用者手動中斷生成');
+
       try {
         const response = await ai.models.generateContent({
           model: selectedGeminiModel,
@@ -697,6 +715,8 @@ export default function Home() {
         });
         return response?.text || '（Gemini 未能取得回應）';
       } catch (apiErr: any) {
+        if (apiErr.name === 'AbortError' || signal?.aborted) throw new Error('使用者手動中斷生成');
+
         const is503OrRateLimit = apiErr.message?.includes('503') || apiErr.message?.includes('429') || apiErr.status === 503;
         if (is503OrRateLimit && attempt < maxRetries) {
           await sleep(retryDelay);
@@ -704,10 +724,10 @@ export default function Home() {
         } else {
           if (githubToken) {
             console.warn("⚠️ Gemini API 塞車，全自動切換至 GitHub Models 備援！");
-            return await callGitHubModels(targetMessages);
+            return await callGitHubModels(targetMessages, signal);
           } else if (groqApiKey) {
             console.warn("⚠️ Gemini API 塞車，全自動切換至 Groq LPU 備援！");
-            return await callGroqAPI(targetMessages);
+            return await callGroqAPI(targetMessages, signal);
           }
           throw apiErr;
         }
@@ -727,18 +747,22 @@ export default function Home() {
     setApiErrorStatus(null);
     const chatId = currentChat.id;
 
+    // 初始化 AbortController 供終止
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
     try {
       let modelResponseText = '';
 
       if (selectedProvider === 'github') {
         if (!githubToken) throw new Error('請先在設定中填入 GitHub PAT 金鑰！');
-        modelResponseText = await callGitHubModels(targetMessages);
+        modelResponseText = await callGitHubModels(targetMessages, controller.signal);
       } else if (selectedProvider === 'groq') {
         if (!groqApiKey) throw new Error('請先在設定中填入 Groq API Key！');
-        modelResponseText = await callGroqAPI(targetMessages);
+        modelResponseText = await callGroqAPI(targetMessages, controller.signal);
       } else {
         if (!apiKey) throw new Error('請先在設定中填入 Gemini API Key！');
-        modelResponseText = await callGeminiWithRetry(targetMessages, latestPdfBase64);
+        modelResponseText = await callGeminiWithRetry(targetMessages, latestPdfBase64, controller.signal);
       }
 
       const finalMessages = [...targetMessages, { role: 'model', content: modelResponseText }];
@@ -756,21 +780,25 @@ export default function Home() {
         setConversations(prev => prev.map(c => c.id === chatId ? data[0] : c));
       }
     } catch (err: any) {
-      setApiErrorStatus(err.message || 'API 響應異常');
+      if (err.message?.includes('中斷') || err.name === 'AbortError') {
+        setApiErrorStatus('使用者已取消生成回應');
+      } else {
+        setApiErrorStatus(err.message || 'API 響應異常');
+      }
     } finally {
       setIsSending(false);
+      abortControllerRef.current = null;
     }
   };
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     const hasCredentials = selectedProvider === 'github' ? !!githubToken : (selectedProvider === 'groq' ? !!groqApiKey : !!apiKey);
     if ((!inputMessage.trim() && !attachedImageUrl && !attachedPdfBase64 && !attachedFileContent) || !currentChat || !hasCredentials || isSending) return;
 
     let finalContent = inputMessage.trim();
-    const pdfBase64Temp = attachedPdfBase64; // 暫存發送給 Gemini API
+    const pdfBase64Temp = attachedPdfBase64;
 
-    // 格式化訊息顯示（落盤至 Supabase DB 的純文字標籤）
     if (attachedImageUrl) {
       finalContent = `${finalContent}\n\n[IMAGE_URL:${attachedImageUrl}]`;
     } else if (attachedPdfName) {
@@ -799,7 +827,20 @@ export default function Home() {
     setAttachedFileContent(null); 
     setAttachedFileName(null);
 
+    // 重置 Textarea 高度
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
+
     await executeSendMessage(updatedMessages, pdfBase64Temp);
+  };
+
+  // ⌨️ 處理 Enter (發送) 與 Shift + Enter (換行)
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
   };
 
   const handleRegenerate = async () => {
@@ -1399,10 +1440,8 @@ CREATE TABLE conversations (
                   <div className="h-full flex items-center justify-center text-slate-600 text-xs italic">這是一場全新的對話，選取圖片、PDF、原始碼或文字檔開始聊吧。</div>
                 ) : (
                   currentChat.messages.map((msg, i) => {
-                    // 解析附件標籤
                     const imgMatch = msg.content.match(/\[IMAGE_URL:(https:\/\/[\s\S]+?)\]/);
 
-                    // 清理出純 Prompt 文字
                     const cleanText = msg.content
                       .replace(/\[IMAGE_URL:[\s\S]+?\]/g, '')
                       .trim();
@@ -1426,7 +1465,6 @@ CREATE TABLE conversations (
                               </div>
                             ) : (
                               <>
-                                {/* 🖼️ 雲端圖片預覽卡片 */}
                                 {imgMatch && (
                                   <div className="mb-2 max-w-xs overflow-hidden rounded border border-slate-700/50 bg-slate-950/40 p-1">
                                     <img src={imgMatch[1]} alt="雲端圖片" className="max-h-40 md:max-h-48 w-auto object-contain rounded" />
@@ -1499,7 +1537,7 @@ CREATE TABLE conversations (
 
                 {apiErrorStatus && (
                   <div className="flex flex-col items-center justify-center p-4 bg-rose-950/20 border border-rose-800/40 rounded-xl space-y-2 animate-fade-in">
-                    <p className="text-xs text-rose-400">⚠️ API 響應異常：{apiErrorStatus}</p>
+                    <p className="text-xs text-rose-400">⚠️ 訊息處理結果：{apiErrorStatus}</p>
                     <button onClick={handleRegenerate} className="bg-rose-600 hover:bg-rose-700 text-white text-xs font-semibold px-4 py-1.5 rounded-lg transition-colors flex items-center gap-1.5">
                       <span>🔄</span>
                       <span>點此重新生成</span>
@@ -1529,7 +1567,7 @@ CREATE TABLE conversations (
               </aside>
             </div>
 
-            {/* 輸入欄 */}
+            {/* ✨ 輸入欄（支援自動高動多行 Textarea 與 🛑 停止生成） */}
             <form onSubmit={handleSendMessage} className="p-3 md:p-4 border-t border-slate-900 bg-slate-950 flex-shrink-0">
               <div className="max-w-3xl mx-auto space-y-2">
                 {isUploadingImage && (
@@ -1538,7 +1576,6 @@ CREATE TABLE conversations (
                   </div>
                 )}
 
-                {/* 🖼️ 雲端圖片預覽卡片 */}
                 {attachedImageUrl && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <img src={attachedImageUrl} alt="預覽" className="w-8 h-8 md:w-10 md:h-10 object-cover rounded border border-slate-700" />
@@ -1547,7 +1584,6 @@ CREATE TABLE conversations (
                   </div>
                 )}
 
-                {/* 📕 本地 PDF 暫存卡片（零雲端消耗） */}
                 {attachedPdfName && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <span className="text-lg">📕</span>
@@ -1557,7 +1593,6 @@ CREATE TABLE conversations (
                   </div>
                 )}
 
-                {/* 💻 本地代碼/文字檔暫存卡片（零雲端消耗，不打入 textarea） */}
                 {attachedFileName && (
                   <div className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800 w-fit">
                     <span className="text-lg">📄</span>
@@ -1567,14 +1602,44 @@ CREATE TABLE conversations (
                   </div>
                 )}
 
-                <div className="flex gap-2 items-center">
-                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2 rounded-lg flex items-center justify-center transition-colors flex-shrink-0" title="夾帶相片(走雲端) 或 PDF/代碼/文字檔(走本地免雲端額度)">
+                <div className="flex gap-2 items-end">
+                  <label className="cursor-pointer bg-slate-900 hover:bg-slate-800 border border-slate-800 p-2.5 rounded-xl flex items-center justify-center transition-colors flex-shrink-0 mb-0.5" title="夾帶相片, PDF 或 代碼/文字檔">
                     <svg className="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13" /></svg>
                     <input type="file" accept="image/*,application/pdf,.txt,.py,.cpp,.h,.cs,.java,.js,.ts,.html,.css,.json,.md" onChange={handleUniversalFileChange} className="hidden" disabled={!activeHasCredentials || isSending || isUploadingImage} />
                   </label>
 
-                  <input type="text" placeholder={activeHasCredentials ? "輸入訊息或發送問題..." : "請先填入專屬 Key / PAT 憑證！"} value={inputMessage} onChange={(e) => setInputMessage(e.target.value)} disabled={!activeHasCredentials || isSending || isUploadingImage} className="flex-1 bg-slate-900 border border-slate-800 rounded-lg px-3 py-1.5 md:px-4 md:py-2 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40" />
-                  <button type="submit" disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedPdfBase64 && !attachedFileContent) || isSending || !activeHasCredentials || isUploadingImage} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-3 py-1.5 md:px-4 md:py-2 rounded-lg transition-colors disabled:opacity-40 flex-shrink-0">發送</button>
+                  {/* ⌨️ 升級：智慧型多行動態高 Textarea */}
+                  <textarea
+                    ref={textareaRef}
+                    value={inputMessage}
+                    onChange={(e) => setInputMessage(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    rows={1}
+                    placeholder={activeHasCredentials ? "輸入訊息...（Enter 發送，Shift+Enter 換行）" : "請先填入專屬 Key / PAT 憑證！"}
+                    disabled={!activeHasCredentials || isSending || isUploadingImage}
+                    className="flex-1 bg-slate-900 border border-slate-800 rounded-xl px-3 py-2 md:px-4 md:py-2.5 text-xs md:text-sm focus:outline-none focus:border-indigo-500 disabled:opacity-40 resize-none max-h-40 scrollbar-none leading-relaxed"
+                  />
+
+                  {/* 🛑 升級：AI 正在生成時，按鈕切換為「停止生成」 */}
+                  {isSending ? (
+                    <button
+                      type="button"
+                      onClick={handleStopGenerating}
+                      className="bg-rose-600 hover:bg-rose-700 text-white text-xs md:text-sm font-semibold px-3.5 py-2.5 rounded-xl transition-colors flex-shrink-0 flex items-center gap-1.5 shadow-md shadow-rose-900/20"
+                      title="主動中斷 AI 回應生成"
+                    >
+                      <span className="text-xs">⏹️</span>
+                      <span>停止</span>
+                    </button>
+                  ) : (
+                    <button
+                      type="submit"
+                      disabled={(!inputMessage.trim() && !attachedImageUrl && !attachedPdfBase64 && !attachedFileContent) || !activeHasCredentials || isUploadingImage}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs md:text-sm font-medium px-4 py-2.5 rounded-xl transition-colors disabled:opacity-40 flex-shrink-0"
+                    >
+                      發送
+                    </button>
+                  )}
                 </div>
               </div>
             </form>
