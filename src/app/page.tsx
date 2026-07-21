@@ -917,14 +917,15 @@ export default function Home() {
                   <input type="password" placeholder="貼上 AI Studio 金鑰..." value={apiKey} onChange={(e) => saveApiKey(e.target.value)} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-indigo-500" />
                 </div>
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
-                  <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Gemini 系列模型</label>
-                  <select value={selectedGeminiModel} onChange={(e) => { setSelectedGeminiModel(e.target.value); localStorage.setItem('gemini_selected_model', e.target.value); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
-                    <option value="gemini-3.5-flash">Gemini 3.5 Flash (極速預設)</option>
-                    <option value="gemini-3.5-pro">Gemini 3.5 Pro (專家推理)</option>
-                    <option value="gemini-3.1-flash">Gemini 3.1 Flash (穩定備援·避開503)</option>
-                    <option value="gemini-3.1-pro">Gemini 3.1 Pro (專家推理備援)</option>
-                  </select>
-                </div>
+                <label className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Gemini 系列模型</label>
+  <select value={selectedGeminiModel} onChange={(e) => { setSelectedGeminiModel(e.target.value); localStorage.setItem('gemini_selected_model', e.target.value); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
+    <option value="gemini-3.5-flash">Gemini 3.5 Flash (極速預設)</option>
+    <option value="gemini-3.5-pro">Gemini 3.5 Pro (專家推理)</option>
+    <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite (超輕量·避開503備援)</option>
+    <option value="gemini-3-flash">Gemini 3 Flash (標準 3 系列核心)</option>
+  </select>
+</div>
+
               </div>
             )}
 
