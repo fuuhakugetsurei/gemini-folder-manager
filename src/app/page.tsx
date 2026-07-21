@@ -110,7 +110,7 @@ export default function Home() {
   // 📋 複製整篇訊息的反饋狀態
   const [copiedMsgIndex, setCopiedMsgIndex] = useState<number | null>(null);
 
-  // 側邊欄 UI 狀態：三點選單（新增 activeFolderMenuId）
+  // 側邊欄 UI 狀態
   const [activeFolderMenuId, setActiveFolderMenuId] = useState<string | null>(null);
   const [activeChatMenuId, setActiveChatMenuId] = useState<string | null>(null);
   
@@ -128,7 +128,7 @@ export default function Home() {
   const [draggedChatId, setDraggedChatId] = useState<string | null>(null);
   const [dragOverFolderId, setDragOverFolderId] = useState<string | null>(null);
 
-  // 模型切換狀態
+  // 模型切換狀態（Gemini 支援 3.5 與 3.1 系列）
   const [selectedGeminiModel, setSelectedGeminiModel] = useState('gemini-3.5-flash');
   const [selectedGithubModel, setSelectedGithubModel] = useState('gpt-4.1-mini');
   const [selectedGroqModel, setSelectedGroqModel] = useState('llama-3.3-70b-versatile');
@@ -909,6 +909,7 @@ export default function Home() {
               </select>
             </div>
 
+            {/* ✨ Gemini 支援 3.5 及 3.1 系列 */}
             {selectedProvider === 'gemini' && (
               <div className="space-y-3">
                 <div className="bg-slate-950 border border-slate-800 p-3 rounded-xl space-y-1.5">
@@ -920,6 +921,8 @@ export default function Home() {
                   <select value={selectedGeminiModel} onChange={(e) => { setSelectedGeminiModel(e.target.value); localStorage.setItem('gemini_selected_model', e.target.value); }} className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-slate-200">
                     <option value="gemini-3.5-flash">Gemini 3.5 Flash (極速預設)</option>
                     <option value="gemini-3.5-pro">Gemini 3.5 Pro (專家推理)</option>
+                    <option value="gemini-3.1-flash">Gemini 3.1 Flash (穩定備援·避開503)</option>
+                    <option value="gemini-3.1-pro">Gemini 3.1 Pro (專家推理備援)</option>
                   </select>
                 </div>
               </div>
@@ -1163,7 +1166,6 @@ CREATE TABLE conversations (
           </form>
 
           <div className="space-y-4">
-            {/* 我的資料夾列表（全面套用三點式選單） */}
             <div>
               <p className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider mb-1">我的資料夾</p>
               <div className="space-y-1">
@@ -1198,7 +1200,6 @@ CREATE TABLE conversations (
                           <span className="truncate max-w-[110px]">{f.name}</span>
                         </button>
                         
-                        {/* ✨ 資料夾專用三點式選單 `⋮` */}
                         <div className="relative">
                           <button
                             onClick={(e) => {
