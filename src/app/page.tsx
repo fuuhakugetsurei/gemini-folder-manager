@@ -2,6 +2,7 @@
 
 import ReactMarkdown from 'react-markdown';
 import remarkMath from 'remark-math';
+import remarkGfm from 'remark-gfm';
 import rehypeKatex from 'rehype-katex';
 import { useState, useEffect, useRef } from 'react';
 import { supabase as defaultSupabase, Folder, Conversation } from '@/lib/supabase';
@@ -1499,9 +1500,9 @@ CREATE TABLE conversations (
                         ) : (
                           <div className="w-full rounded-none px-1 py-1 text-slate-200 space-y-3">
                             {cleanText && (
-                              <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3 prose-headings:font-bold prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-code:text-xs md:prose-code:text-sm">
+                              <div className="prose prose-invert max-w-none text-slate-200 text-sm md:text-base leading-relaxed space-y-3 prose-headings:font-bold prose-code:bg-slate-900 prose-code:px-1.5 prose-code:py-0.5 prose-code:rounded prose-code:text-amber-400 prose-table:border-collapse prose-th:border prose-th:border-slate-700 prose-th:p-2 prose-td:border prose-td:border-slate-800 prose-td:p-2">                                
                                 <ReactMarkdown 
-                                  remarkPlugins={[remarkMath]} 
+                                  remarkPlugins={[remarkMath, remarkGfm]} 
                                   rehypePlugins={[rehypeKatex]}
                                   components={{
                                     pre: CodeBlock
